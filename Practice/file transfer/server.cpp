@@ -5,13 +5,17 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+// #include <syncstream> C++ 20
 #define MAX_PARALLEL_REQUESTS 20
 using namespace std;
 
 void * RequestHandler (void *) ;
-
+// osyncstream bout(std::cout); to sync output to terminal
 int main()
 {
+
+
+
     //server
     int serverfd;
     serverfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -103,7 +107,29 @@ int main()
     return 0;
 }
 
+void ServiceRegisterRequest() {
 
+}
+
+vector<string> GetArgs(char* buff) {
+
+    vector<string> ret(0);
+    char * saveptr;
+
+    char* tok = strtok_r(buff, ";" , &saveptr);
+    string s (tok);
+    ret.push_back(s);
+
+    while ( (tok = strtok_r(NULL, ";", &saveptr) )) {
+
+        string s (tok);
+
+        ret.push_back(s);
+
+    }
+
+    return ret;
+}
 
 void * RequestHandler (void * args)
 {
@@ -111,38 +137,18 @@ void * RequestHandler (void * args)
     char buff[1000];
 
     int datarec = recv (remotesock, buff, 999, 0);
-    buff[datarec] = '\0';
 
-    cout << buff << " is requested.\n";
-//    recv(newSocket, client_message, 2000, 0);
-//
-//    // Send message to the client socket
-//
-//    pthread_mutex_lock(&lock);
-//
-//    char *message = malloc(sizeof(client_message)+20);
-//
-//    strcpy(message,"Hello Client : ");
-//
-//    strcat(message,client_message);
-//
-//    strcat(message,"\n");
-//
-//    strcpy(buffer,message);
-//
-//    free(message);
-//
-//    pthread_mutex_unlock(&lock);
-//
-//    sleep(1);
-//
-//    send(newSocket,buffer,13,0);
-//
-//    printf("Exit socketThread \n");
-//
+
+    cout << "Command received: " << buff << " \n" << flush;
+    vector<string> stringargs = GetArgs(buff);
+
+
+
+
     close(remotesock);
     pthread_exit(NULL);
 
 }
+
 
 
