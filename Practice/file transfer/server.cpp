@@ -11,6 +11,33 @@ using namespace std;
 
 void * RequestHandler (void *) ;
 // osyncstream bout(std::cout); to sync output to terminal
+
+struct conn_details {
+    int fd;
+    string ip;
+    int port;
+};
+
+class User {
+    public:
+    string username;
+    string ip;
+    int port;
+    bool loggedin;
+
+    User (string username, string ip, int port, bool loggedin) {
+        this->username = username;
+        this->ip = ip;
+        this->port = port;
+        this->loggedin = loggedin;
+    }
+
+};
+
+
+vector<User> listOfUsers;
+
+
 int main()
 {
 
@@ -48,17 +75,21 @@ int main()
     int x = sizeof(saddr);
     pthread_t tids[MAX_PARALLEL_REQUESTS];
     int i = 0;
+    int remotesock[MAX_PARALLEL_REQUESTS];
     while(true)
     {
-        int remotesock = accept(serverfd,(struct sockaddr *) &saddr,(socklen_t*) &x  );
-        if(remotesock == -1)
+        remotesock[i] = accept(serverfd,(struct sockaddr *) &saddr,(socklen_t*) &x  );
+        if(remotesock[i] == -1)
         {
 
-            cout << "connnection accepting failed. remote sock is " << remotesock << endl;
+            cout << "connnection accepting failed. remote sock is " << remotesock[i] << endl;
             exit(-1);
         }
-
-        int newthread = pthread_create(&tids[i], NULL, RequestHandler, &remotesock);
+        struct conn_details con;
+        con.fd = remotesock[i];
+        con.ip = inet_ntoa(saddr.sin_addr );
+        con.port = ntohs(saddr.sin_port);
+        int newthread = pthread_create(&tids[i], NULL, RequestHandler, &con);
         if( newthread != 0)
         {
             cout << "Failed to launch RequestHandler, exiting";
@@ -73,6 +104,7 @@ int main()
             {
                 pthread_join(tids[j], NULL);
             }
+            i=0;
 
         }
 
@@ -107,20 +139,34 @@ int main()
     return 0;
 }
 
-void ServiceRegisterRequest() {
+void ServiceRegisterRequest( vector<string> sargs, struct conn_details con )
+{
 
+
+    FILE * fp = fopen ("userdata.txt", "a");
+    string s = "\n" + sargs[1] + ";" + sargs[2];
+    fwrite( s.c_str(), sizeof(char), s.length(), fp);
+    fclose(fp);
+    User u (sargs[1], con.ip, con.port, true);
+    listOfUsers.push_back( u);
+    for( auto i : listOfUsers ) {
+        cout << i.ip << i.port << endl;
+    }
 }
 
-vector<string> GetArgs(char* buff) {
+
+vector<string> GetArgs(char* buff)
+{
 
     vector<string> ret(0);
     char * saveptr;
 
-    char* tok = strtok_r(buff, ";" , &saveptr);
+    char* tok = strtok_r(buff, ";", &saveptr);
     string s (tok);
     ret.push_back(s);
 
-    while ( (tok = strtok_r(NULL, ";", &saveptr) )) {
+    while ( (tok = strtok_r(NULL, ";", &saveptr) ))
+    {
 
         string s (tok);
 
@@ -133,14 +179,20 @@ vector<string> GetArgs(char* buff) {
 
 void * RequestHandler (void * args)
 {
-    int remotesock = *(int *)args;
+    struct conn_details con = *(struct conn_details * )args;
+    int remotesock = con.fd;
     char buff[1000];
 
     int datarec = recv (remotesock, buff, 999, 0);
 
 
     cout << "Command received: " << buff << " \n" << flush;
-    vector<string> stringargs = GetArgs(buff);
+    vector<string> sargs = GetArgs(buff);
+
+    if ( sargs[0] == "create_user")
+    {
+        ServiceRegisterRequest(sargs, con);
+    }
 
 
 
