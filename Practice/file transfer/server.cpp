@@ -12,6 +12,10 @@ using namespace std;
 void * RequestHandler (void *) ;
 // osyncstream bout(std::cout); to sync output to terminal
 
+
+pthread_mutex_t sessionkeymutex = PTHREAD_MUTEX_INITIALIZER;
+static int sessionkey = 1000;
+
 struct conn_details {
     int fd;
     string ip;
@@ -21,15 +25,17 @@ struct conn_details {
 class User {
     public:
     string username;
+    string password;
     string ip;
     int port;
     bool loggedin;
 
-    User (string username, string ip, int port, bool loggedin) {
+    User (string username, string password, string ip, int port, bool loggedin) {
         this->username = username;
         this->ip = ip;
         this->port = port;
         this->loggedin = loggedin;
+        this->password = password;
     }
 
 };
@@ -37,6 +43,7 @@ class User {
 
 vector<User> listOfUsers;
 
+map<string, User*> skeytouser;
 
 int main()
 {
@@ -142,19 +149,60 @@ int main()
 void ServiceRegisterRequest( vector<string> sargs, struct conn_details con )
 {
 
-
     FILE * fp = fopen ("userdata.txt", "a");
     string s = "\n" + sargs[1] + ";" + sargs[2];
     fwrite( s.c_str(), sizeof(char), s.length(), fp);
     fclose(fp);
-    User u (sargs[1], con.ip, con.port, true);
+    User u (sargs[1], sargs[2], con.ip, con.port, false);
     listOfUsers.push_back( u);
-    for( auto i : listOfUsers ) {
-        cout << i.ip << i.port << endl;
-    }
+
+
 }
 
+void Notify(string msg, int sockfd)
+{
+    char cmsg[msg.length()+1];
+    strcpy(cmsg, msg.c_str());
+    cmsg[msg.length()] = '\0';
+    char * buff = cmsg;
+    send(sockfd, buff, strlen(buff)+1, 0);
+    return;
+}
 
+int GenerateSessionKey () {
+    pthread_mutex_lock( &sessionkeymutex );
+    int tmp = sessionkey++;
+    pthread_mutex_unlock( &sessionkeymutex );
+    return tmp;
+}
+
+void ServiceLoginRequest( vector<string> sargs, struct conn_details con)
+{
+    string msg = "User not registered";
+    for( int i = 0; i < listOfUsers.size(); i++ ) {
+
+        if(listOfUsers[i].username == sargs[1]) {
+
+            if(listOfUsers[i].password == sargs[2] ) {
+                msg = "Login successful";
+                listOfUsers[i].loggedin = true;
+                int skey = GenerateSessionKey();
+                string sskey = to_string(skey);
+                msg += ";" + sskey;
+                skeytouser[sskey] = &listOfUsers[i];
+
+                break;
+            }
+            else {
+                msg = "Password wrong";
+                break;
+            }
+
+        }
+
+    }
+    Notify(msg, con.fd);
+}
 vector<string> GetArgs(char* buff)
 {
 
@@ -177,6 +225,14 @@ vector<string> GetArgs(char* buff)
     return ret;
 }
 
+void ServiceLogoutRequest( vector<string> sargs)
+{
+
+    skeytouser[sargs[1]]->loggedin = false;
+
+}
+
+
 void * RequestHandler (void * args)
 {
     struct conn_details con = *(struct conn_details * )args;
@@ -192,6 +248,12 @@ void * RequestHandler (void * args)
     if ( sargs[0] == "create_user")
     {
         ServiceRegisterRequest(sargs, con);
+    }
+    else if ( sargs[0] == "login" ) {
+        ServiceLoginRequest(sargs, con);
+    }
+    else if (sargs[0] == "logout" ) {
+        ServiceLogoutRequest(sargs);
     }
 
 
