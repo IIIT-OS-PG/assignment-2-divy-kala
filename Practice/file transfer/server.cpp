@@ -7,6 +7,7 @@
 #include <unistd.h>
 // #include <syncstream> C++ 20
 #define MAX_PARALLEL_REQUESTS 20
+// TRACKER
 using namespace std;
 
 void * RequestHandler (void *) ;
@@ -16,21 +17,24 @@ void * RequestHandler (void *) ;
 pthread_mutex_t sessionkeymutex = PTHREAD_MUTEX_INITIALIZER;
 static int sessionkey = 1000;
 
-struct conn_details {
+struct conn_details
+{
     int fd;
     string ip;
     int port;
 };
 
-class User {
-    public:
+class User
+{
+public:
     string username;
     string password;
     string ip;
     int port;
     bool loggedin;
 
-    User (string username, string password, string ip, int port, bool loggedin) {
+    User (string username, string password, string ip, int port, bool loggedin)
+    {
         this->username = username;
         this->ip = ip;
         this->port = port;
@@ -41,10 +45,39 @@ class User {
 };
 
 
-vector<User> listOfUsers;
 
-map<string, User*> skeytouser;
+class File {
+    public:
+    string hashoffile;
+    string filename;
+    vector<User> peerswithfile;
+    vector<string> piecehash;
 
+
+};
+
+class Group {
+public:
+    Group (User* o, string gid) {
+        owner = o;
+        groupid = gid;
+
+    }
+
+    User* owner;
+    string groupid;
+    vector<File> files;
+
+
+};
+
+
+
+
+map<string, string> skeytouname;
+map<string, User*> unametouser;
+map<string, Group *> gidtogroup;
+map<string, string> unametogid;
 int main()
 {
 
@@ -153,8 +186,8 @@ void ServiceRegisterRequest( vector<string> sargs, struct conn_details con )
     string s = "\n" + sargs[1] + ";" + sargs[2];
     fwrite( s.c_str(), sizeof(char), s.length(), fp);
     fclose(fp);
-    User u (sargs[1], sargs[2], con.ip, con.port, false);
-    listOfUsers.push_back( u);
+    User *u = new User (sargs[1], sargs[2], con.ip, con.port, false);
+    unametouser[sargs[1]] = u;
 
 
 }
@@ -162,14 +195,18 @@ void ServiceRegisterRequest( vector<string> sargs, struct conn_details con )
 void Notify(string msg, int sockfd)
 {
     char cmsg[msg.length()+1];
-    strcpy(cmsg, msg.c_str());
+    for(int i = 0; i < msg.length(); i++ ) {
+    	cmsg[i] = msg.c_str()[i];
+    }
+ //   strcpy(cmsg, msg.c_str());
     cmsg[msg.length()] = '\0';
     char * buff = cmsg;
     send(sockfd, buff, strlen(buff)+1, 0);
     return;
 }
 
-int GenerateSessionKey () {
+int GenerateSessionKey ()
+{
     pthread_mutex_lock( &sessionkeymutex );
     int tmp = sessionkey++;
     pthread_mutex_unlock( &sessionkeymutex );
@@ -179,21 +216,29 @@ int GenerateSessionKey () {
 void ServiceLoginRequest( vector<string> sargs, struct conn_details con)
 {
     string msg = "User not registered";
-    for( int i = 0; i < listOfUsers.size(); i++ ) {
 
-        if(listOfUsers[i].username == sargs[1]) {
+    for( auto i = unametouser.begin(); i != unametouser.end(); i++)
+    {
 
-            if(listOfUsers[i].password == sargs[2] ) {
+        if(i->second->username == sargs[1])
+        {
+
+            if(i->second->password == sargs[2] )
+            {
                 msg = "Login successful";
-                listOfUsers[i].loggedin = true;
+                i->second->loggedin = true;
+                i->second->ip = sargs[3];
+                i->second->port = atoi(sargs[4].c_str());
                 int skey = GenerateSessionKey();
                 string sskey = to_string(skey);
                 msg += ";" + sskey;
-                skeytouser[sskey] = &listOfUsers[i];
+                skeytouname[sskey] = i->second->username;
+
 
                 break;
             }
-            else {
+            else
+            {
                 msg = "Password wrong";
                 break;
             }
@@ -228,10 +273,40 @@ vector<string> GetArgs(char* buff)
 void ServiceLogoutRequest( vector<string> sargs)
 {
 
-    skeytouser[sargs[1]]->loggedin = false;
+    unametouser[skeytouname[sargs[1]]]->loggedin = false;
+    skeytouname.erase(sargs[1]);
 
 }
+void ServiceGroupsFetchRequest (vector<string> sargs, struct conn_details con) {
+    string ret = "";
+    for( auto i = gidtogroup.begin(); i != gidtogroup.end(); i++)
+    {
+        ret += i->first + ";" + i->second->owner->ip + ";" + to_string(i->second->owner->port) + ";";
 
+
+    }
+    if( ret == "") ret = "No groups";
+
+    Notify(ret,con.fd);
+
+
+}
+void ServiceCreateGroupRequest( vector<string> sargs)
+{
+
+    //Update groups. Create new Group object, set owner. Make this user member by updating map<usr,grp>.
+
+
+    string gid = sargs[1];
+    string skey = sargs[2];
+    if(skey == "-1") return;
+    User * o = unametouser[skeytouname[skey]];
+    Group * g = new Group (o, gid);
+    gidtogroup[gid] = g;
+    unametogid[o->username] = gid;
+
+
+}
 
 void * RequestHandler (void * args)
 {
@@ -249,11 +324,21 @@ void * RequestHandler (void * args)
     {
         ServiceRegisterRequest(sargs, con);
     }
-    else if ( sargs[0] == "login" ) {
+    else if ( sargs[0] == "login" )
+    {
         ServiceLoginRequest(sargs, con);
     }
-    else if (sargs[0] == "logout" ) {
+    else if (sargs[0] == "logout" )
+    {
         ServiceLogoutRequest(sargs);
+    }
+    else if (sargs[0] == "create_group" )
+    {
+        ServiceCreateGroupRequest(sargs);
+    }
+    else if (sargs[0] == "list_groups" )
+    {
+        ServiceGroupsFetchRequest(sargs, con);
     }
 
 
