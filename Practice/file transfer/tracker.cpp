@@ -16,7 +16,8 @@ void * RequestHandler (void *) ;
 
 pthread_mutex_t sessionkeymutex = PTHREAD_MUTEX_INITIALIZER;
 static int sessionkey = 1000;
-
+vector<string> GetArgs(char* buff);
+void InitializeUsers() ;
 struct conn_details
 {
     int fd;
@@ -80,8 +81,8 @@ map<string, Group *> gidtogroup;
 map<string, string> unametogid;
 int main()
 {
-
-
+    //read registered users from per tracker file
+    InitializeUsers ();
 
     //server
     int serverfd;
@@ -189,6 +190,28 @@ void ServiceRegisterRequest( vector<string> sargs, struct conn_details con )
     User *u = new User (sargs[1], sargs[2], con.ip, con.port, false);
     unametouser[sargs[1]] = u;
 
+
+}
+
+void InitializeUsers () {
+    ifstream userfile;
+    userfile.open("userdata.txt");
+
+    while (!userfile.eof() ) {
+        string line;
+        userfile >> line;
+        if (userfile.eof()) break;
+        char buff[1000];
+        strcpy(buff, line.c_str());
+        vector<string> sargs = GetArgs(buff);
+        if (sargs[0] == "\n") {
+            continue;
+        }
+        User *u = new User (sargs[0], sargs[1], "-1", -1, false);
+        unametouser[sargs[0]] = u;
+    }
+
+    userfile.close();
 
 }
 
@@ -339,6 +362,11 @@ void * RequestHandler (void * args)
     else if (sargs[0] == "list_groups" )
     {
         ServiceGroupsFetchRequest(sargs, con);
+    }
+
+
+    else {
+
     }
 
 

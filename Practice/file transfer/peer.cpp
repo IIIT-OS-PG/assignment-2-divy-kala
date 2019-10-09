@@ -15,9 +15,17 @@ using namespace std;
 string skey;
 int s_port;
 string s_ip;
+string username;
 map<string, pair<string,string> > groups;
-struct conn_details
-{
+struct join_request {
+    string groupid;
+    string req_user;
+
+};
+vector<struct join_request> join_requests;
+
+
+struct conn_details {
     int fd;
     string ip;
     int port;
@@ -26,16 +34,14 @@ struct conn_details
 
 
 
-sockaddr_in GetTracker()
-{
+sockaddr_in GetTracker() {
     struct sockaddr_in tracker;
     tracker.sin_family = AF_INET;
     tracker.sin_port = htons(50000);
     inet_pton (AF_INET, "127.0.0.1", &tracker.sin_addr);
     return tracker;
 }
-vector<string> GetArgs(char* buff)
-{
+vector<string> GetArgs(char* buff) {
 
     vector<string> ret(0);
     char * saveptr;
@@ -44,8 +50,7 @@ vector<string> GetArgs(char* buff)
     string s (tok);
     ret.push_back(s);
 
-    while ( (tok = strtok_r(NULL, ";", &saveptr) ))
-    {
+    while ( (tok = strtok_r(NULL, ";", &saveptr) )) {
 
         string s (tok);
 
@@ -55,27 +60,53 @@ vector<string> GetArgs(char* buff)
 
     return ret;
 }
-void NotifyTracker(string msg, int sockfd)
-{
+
+void Notify(string msg, int sockfd) {
     char cmsg[msg.length()+1];
-    for(int i = 0; i < msg.length(); i++ )
-    {
+    for(int i = 0; i < msg.length(); i++ ) {
+        cmsg[i] = msg.c_str()[i];
+    }
+//   strcpy(cmsg, msg.c_str());
+    cmsg[msg.length()] = '\0';
+    char * buff = cmsg;
+    send(sockfd, buff, strlen(buff)+1, 0);
+    return;
+}
+
+
+void NotifyTracker(string msg, int sockfd) {
+    char cmsg[msg.length()+1];
+    for(int i = 0; i < msg.length(); i++ ) {
         cmsg[i] = msg.c_str()[i];
     }
     //   strcpy(cmsg, msg.c_str());
     cmsg[msg.length()] = '\0';
     char * buff = cmsg;
     send(sockfd, buff, strlen(buff)+1, 0);
-    if(errno == ENOTCONN)
-    {
+    if(errno == ENOTCONN) {
         //connect to new tracker
     }
     return;
 }
+void  ServiceGroupJoinRequest(vector<string> sargs) {
+//    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+//    struct sockaddr_in saddr = GetTracker();
+//    int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
+//    if( connectret != 0) {
+//        cout << "Connection to tracker failed" << endl;
+//        exit(-1);
+//    }
+//    string msg = "join
+//    NotifyTracker(
+    struct join_request j;
+    j.groupid = sargs[1];
+    j.req_user = sargs[2];
+    join_requests.push_back(j);
 
 
-void *  ServicePeerServerRequests (void * args)
-{
+}
+
+void *  ServicePeerServerRequests (void * args) {
 
 
     struct conn_details con = *(struct conn_details * )args;
@@ -88,23 +119,22 @@ void *  ServicePeerServerRequests (void * args)
 
     vector<string> sargs = GetArgs(buff);
 
-    if ( sargs[0] == "create_user")
-    {
-        //ServiceRegisterRequest(sargs, con);
+    if ( sargs[0] == "join_group") {
+        ServiceGroupJoinRequest(sargs);
     }
+
+
 
 }
 
 
 
 
-void * PeerServerListener  ( void * )
-{
+void * PeerServerListener  ( void * ) {
 
     int serverfd;
     serverfd = socket(AF_INET, SOCK_STREAM, 0);
-    if ( serverfd == -1 )
-    {
+    if ( serverfd == -1 ) {
         cout << "Server socket creation failed.";
         exit(-1);
     }
@@ -117,15 +147,13 @@ void * PeerServerListener  ( void * )
 
 
     int bret = bind(serverfd,(struct sockaddr *) &saddr, sizeof(saddr));
-    if(bret)
-    {
+    if(bret) {
         cout << "couldnt bind Peer Server\n";
         exit(-1);
     }
 
 
-    if ( listen(serverfd,5) )
-    {
+    if ( listen(serverfd,5) ) {
         cout << "listening failed for Peer Server" << endl;
         exit(-1);
     }
@@ -133,11 +161,9 @@ void * PeerServerListener  ( void * )
     pthread_t tids[MAX_PARALLEL_REQUESTS];
     int i = 0;
     int remotesock[MAX_PARALLEL_REQUESTS];
-    while(true)
-    {
+    while(true) {
         remotesock[i] = accept(serverfd,(struct sockaddr *) &saddr,(socklen_t*) &x  );
-        if(remotesock[i] == -1)
-        {
+        if(remotesock[i] == -1) {
 
             cout << "connnection accepting failed for peer server. remote sock is " << remotesock[i] << endl;
             exit(-1);
@@ -147,18 +173,15 @@ void * PeerServerListener  ( void * )
         con.ip = inet_ntoa(saddr.sin_addr );
         con.port = ntohs(saddr.sin_port);
         int newthread = pthread_create(&tids[i], NULL, ServicePeerServerRequests, &con);
-        if( newthread != 0)
-        {
+        if( newthread != 0) {
             cout << "Failed to launch RequestHandler, exiting";
             exit(-1);
         }
 
         i++;
-        if( i >= MAX_PARALLEL_REQUESTS)
-        {
+        if( i >= MAX_PARALLEL_REQUESTS) {
 
-            for (int j = 0; j < i; j++)
-            {
+            for (int j = 0; j < i; j++) {
                 pthread_join(tids[j], NULL);
             }
             i=0;
@@ -172,8 +195,7 @@ void * PeerServerListener  ( void * )
 
 }
 
-vector <string> GetMessage(int sockfd)
-{
+vector <string> GetMessage(int sockfd) {
     char buff[1000];
     int datarec = recv (sockfd, buff, 999, 0);
 
@@ -182,55 +204,45 @@ vector <string> GetMessage(int sockfd)
 }
 
 
-int main (int argc, char* argv[])
-{
+int main (int argc, char* argv[]) {
+    //get PeerServer ip,port from command line
+    if(argc==3) {
+        s_port = atoi(argv[2]);
+        s_ip = argv[1];
 
-    if(argc==2)
-    {
-        s_port = atoi(argv[1]);
-        s_ip = argv[0];
-
-    }
-    else
-    {
+    } else {
         s_port = 50001;
         s_ip = "127.0.0.1";
     }
 
 
 
-
+    //create PeerServer thread
     pthread_t tserv;
-
-
-
-
     int newthread = pthread_create(&tserv, NULL, PeerServerListener, NULL);
-    if( newthread != 0)
-    {
+    if( newthread != 0) {
         cout << "Failed to launch PeerServerHandler, exiting";
         exit(-1);
     }
 
 
+
+    //PeerClient code
     string input = "";
     skey = "-1";
-    while (input != "quit")
-    {
+    while (input != "quit") {
         cout << "#";
         cin >> input;
         int sockfd = socket(AF_INET, SOCK_STREAM, 0);
         struct sockaddr_in saddr = GetTracker();;
         int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
-        if( connectret != 0)
-        {
+        if( connectret != 0) {
             cout << "Connection to tracker failed" << endl;
             exit(-1);
         }
 
 
-        if(input == "create_user")
-        {
+        if(input == "create_user") {
 
             string user_id;
             string passwd;
@@ -238,45 +250,35 @@ int main (int argc, char* argv[])
             NotifyTracker("create_user;"+user_id+";"+passwd, sockfd);
 
 
-        }
-        else if (input == "login" )
-        {
+        } else if (input == "login" ) {
             string user_id;
             string passwd;
             cin >> user_id >> passwd;
+
             NotifyTracker("login;"+user_id+";"+passwd+";"+s_ip+";"+to_string(s_port), sockfd);
 
             vector<string> sargs = GetMessage(sockfd);
-            if(sargs[0] == "Login successful")
-            {
+            if(sargs[0] == "Login successful") {
                 skey = sargs[1];
                 cout << sargs[0] << endl << "Session key is " << skey << endl;
-            }
-            else
-            {
+                username = user_id;
+            } else {
                 cout << sargs[0] << endl;
             }
-        }
-        else if (input == "logout" )
-        {
+        } else if (input == "logout" ) {
             NotifyTracker("logout;"+skey, sockfd);
             skey = "-1";
 
-        }
-        else if (input == "create_group" )
-        {
+        } else if (input == "create_group" ) {
             string groupid;
             cin >> groupid;
             NotifyTracker("create_group;"+groupid+";"+skey, sockfd);
 
 
-        }
-        else if (input == "list_groups" )
-        {
+        } else if (input == "list_groups" ) {
             NotifyTracker("list_groups;"+skey, sockfd);
             vector<string> sargs = GetMessage(sockfd);
-            if(sargs[0] == "No groups")
-            {
+            if(sargs[0] == "No groups") {
 
                 cout << sargs[0];
                 close(sockfd);
@@ -288,40 +290,50 @@ int main (int argc, char* argv[])
             vector<string> sargsPort;
 
             groups.clear();
-            for(int i = 0; i < sargs.size(); i++)
-            {
-                if((i+1) % 3==1 )
-                {
+            for(int i = 0; i < sargs.size(); i++) {
+                if((i+1) % 3==1 ) {
                     sargsGrp.push_back(sargs[i] );
 
-                }
-                else if ( (i+1) %3 ==2 )
-                {
+                } else if ( (i+1) %3 ==2 ) {
                     sargsIP.push_back(sargs[i]);
-                }
-                else if ( (i+1) % 3 == 0)
-                {
+                } else if ( (i+1) % 3 == 0) {
                     sargsPort.push_back(sargs[i]);
                 }
 
 
             }
-            for(int i = 0; i < sargsGrp.size(); i++)
-            {
-              //  cout << sargsGrp[i] << " " << sargsIP[i] << " " << sargsPort[i] << endl << flush;
-                groups[ sargsGrp[i] ] = make_pair(sargsIP[i], sargsPort[i];
+            for(int i = 0; i < sargsGrp.size(); i++) {
+                cout << sargsGrp[i] << " " << sargsIP[i] << " " << sargsPort[i] << endl << flush;
+                groups[ sargsGrp[i] ] = make_pair(sargsIP[i], sargsPort[i]);
 
             }
 
+        } else if (input == "join_group") {
+            //after executing this tracker shuts down for some reason
+            string groupid;
+            cin >> groupid;
+            string ip = groups [groupid].first;
+            int port = atoi(groups[groupid].second.c_str());
+
+            int peerfd = socket(AF_INET, SOCK_STREAM, 0);
+
+            struct sockaddr_in peer;
+            peer.sin_family = AF_INET;
+            peer.sin_port = htons(port);
+            inet_pton (AF_INET, ip.c_str(), &peer.sin_addr);
+
+            int joingrppeer = connect (peerfd,(struct sockaddr*) &peer, sizeof(peer) );
+            Notify("join_group;"+groupid+";"+username, peerfd);
+            close(peerfd);
+
+        } else if (input == "list_requests") {
+            for(int i = 0; i < join_requests.size(); i++) {
+                cout << join_requests[i].groupid << " : " << join_requests[i].req_user << endl << flush;
+            }
         }
-
-
         close(sockfd);
-
-
     }
-
-    //request file
+//request file
 //    char * buff = "file1.txt";
 //    send(sockfd, buff, strlen(buff), 0);
 //
