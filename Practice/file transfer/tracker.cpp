@@ -51,7 +51,7 @@ class File {
     public:
     string hashoffile;
     string filename;
-    vector<User> peerswithfile;
+    vector<User*> peerswithfile;
     vector<string> piecehash;
 
 
@@ -78,7 +78,7 @@ public:
 map<string, string> skeytouname;
 map<string, User*> unametouser;
 map<string, Group *> gidtogroup;
-map<string, string> unametogid;
+multimap<string, string> unametogid;
 int main()
 {
     //read registered users from per tracker file
@@ -196,7 +196,10 @@ void ServiceRegisterRequest( vector<string> sargs, struct conn_details con )
 void InitializeUsers () {
     ifstream userfile;
     userfile.open("userdata.txt");
-
+    if(!userfile.good()) {
+        userfile.close();
+        return;
+    }
     while (!userfile.eof() ) {
         string line;
         userfile >> line;
@@ -326,10 +329,68 @@ void ServiceCreateGroupRequest( vector<string> sargs)
     User * o = unametouser[skeytouname[skey]];
     Group * g = new Group (o, gid);
     gidtogroup[gid] = g;
-    unametogid[o->username] = gid;
+    unametogid.emplace(o->username, gid);
+//    unametogid[o->username] = gid;
 
 
 }
+
+void ServiceGroupAcceptRequest( vector<string> sargs, conn_details con) {
+    string skey = sargs[1];
+    string uid = sargs[2];
+    string gid = sargs[3];
+
+    string requestingUid = skeytouname[skey];
+    if (gidtogroup[gid]->owner->username == requestingUid) {
+     //   unametogid[uid] = gid;
+        unametogid.emplace(uid, gid);
+        Notify("Acceptance acknowledged by tracker", con.fd);
+        return;
+    }
+    Notify("Error occured, are you the owner of the group?", con.fd);
+    return;
+
+
+
+}
+
+void ServiceGroupLeaveRequest( vector<string> sargs, conn_details con) {
+    string skey = sargs[1];
+    string gid = sargs[2];
+    string req_uid = skeytouname[skey];
+
+    pair<std::multimap<string,string>::iterator, std::multimap<string,string>::iterator>utog = unametogid.equal_range(req_uid);
+    bool left = false;
+    for( auto i = utog.first; i != utog.second; i++ ) {
+        if(i->second == gid) {
+            unametogid.erase(i);
+            Notify("Group " + i->second + " has been left by " + i->first,con.fd);
+            left = true;
+            break;
+        }
+    }
+    //TODO delete group if owner deleted
+    //TODO THIS CODE TO REMOVE USER FROM SHARED GROUP FILES HAS NOT BEEN TESTED YET
+    Group *group = gidtogroup[gid];
+    User *u = unametouser[req_uid];
+    for (auto i = group->files.begin() ; i != group->files.end(); i++ ) {
+        for ( auto j = i->peerswithfile.begin(); j!= i->peerswithfile.end(); j++) {
+            if( (*j)->username == req_uid ) {
+                cout << "deleted " << (*j)->username  << (*j)->ip<< flush;
+                i->peerswithfile.erase(j);
+
+            }
+        }
+    }
+    if (left == false) {
+         Notify("Group leaving failed, were you part of the group?", con.fd);
+    }
+
+
+
+    return;
+}
+
 
 void * RequestHandler (void * args)
 {
@@ -339,7 +400,10 @@ void * RequestHandler (void * args)
 
     int datarec = recv (remotesock, buff, 999, 0);
 
-
+    if(datarec ==0) {
+       close(remotesock);
+    pthread_exit(NULL);
+    }
     cout << "Command received: " << buff << " \n" << flush;
     vector<string> sargs = GetArgs(buff);
 
@@ -363,11 +427,17 @@ void * RequestHandler (void * args)
     {
         ServiceGroupsFetchRequest(sargs, con);
     }
-
-
-    else {
+    else if (sargs[0] == "nop") {
 
     }
+    else if (sargs[0] == "accept_request") {
+        ServiceGroupAcceptRequest (sargs, con);
+    }
+    else if (sargs[0] == "leave_group") {
+        ServiceGroupLeaveRequest (sargs, con);
+    }
+
+
 
 
 

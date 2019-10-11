@@ -310,6 +310,8 @@ int main (int argc, char* argv[]) {
 
         } else if (input == "join_group") {
             //after executing this tracker shuts down for some reason
+            close(sockfd);
+
             string groupid;
             cin >> groupid;
             string ip = groups [groupid].first;
@@ -329,7 +331,26 @@ int main (int argc, char* argv[]) {
         } else if (input == "list_requests") {
             for(int i = 0; i < join_requests.size(); i++) {
                 cout << join_requests[i].groupid << " : " << join_requests[i].req_user << endl << flush;
+                NotifyTracker("nop",sockfd);
             }
+        } else if (input == "accept_request") {
+            string gid, userid;
+            cin >> gid >> userid;
+            NotifyTracker("accept_request;" + skey +";" + userid + ";" + gid, sockfd);
+            cout << GetMessage(sockfd)[0] << endl;
+            for(auto i = join_requests.begin(); i != join_requests.end(); i++) {
+                if ( i->groupid == gid &&i->req_user == userid) {
+                    join_requests.erase(i);
+                    break;
+                }
+            }
+        }
+        else if (input == "leave_group") {
+            string gid;
+            cin >> gid;
+            NotifyTracker ("leave_group;" + skey +";" + gid, sockfd);
+            cout << GetMessage(sockfd)[0] << endl;
+
         }
         close(sockfd);
     }
