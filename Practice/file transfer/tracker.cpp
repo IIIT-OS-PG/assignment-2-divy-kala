@@ -494,6 +494,10 @@ void ServiceDownloadRequest(vector<string> sargs, conn_details con) {
             authorized = true;
         }
     }
+    if(!authorized) {
+        string msg = "You do not belong to this group";
+        Notify(msg,con.fd);
+    }
 
     //fetch relevant data
 //    string msg = "";
@@ -517,6 +521,38 @@ void ServiceDownloadRequest(vector<string> sargs, conn_details con) {
     return;
 }
 
+void ServiceRetrieveRelevantRequest(vector<string> sargs, conn_details con) {
+    string skey = sargs[1];
+    string gid = sargs[2];
+    string filename = sargs[3];
+
+    string uid = skeytouname[skey];
+    User * u= unametouser[uid];
+    string actualgid = unametogid.find(uid)->second;
+    if( actualgid != gid) {
+        Notify("You do not belong to this group",con.fd);
+        return;
+    }
+    Group * g = gidtogroup[gid];
+    string msg = "";
+    //Response format: hashoffile, filesize, num of pieces, piecewise hashes
+    //, number of relevant peers, (username, ip, port)s
+    for( auto i = g->files.begin(); i != g->files.end(); i++) {
+
+        if(i->filename == filename) {
+            msg += i->hashoffile + ";" + i->filesize + ";" +i->piecehash.size() +";" ;
+            for (auto k = i->piecehash.begin(); k!=i->piecehash.end(); k++) {
+                msg += k + ";" ;
+            }
+            msg += i->peerswithfile.size() + ";";
+            for (auto j = i->peerswithfile.begin(); i->peerswithfile.end(); j++) {
+                msg+= j->username + ";" + j->ip + ";" + to_string(j->port)
+                        +";";
+            }
+        }
+    }
+    Notify(msg, con.fd);
+}
 void * RequestHandler (void * args) {
     struct conn_details con = *(struct conn_details * )args;
     int remotesock = con.fd;
@@ -553,6 +589,8 @@ void * RequestHandler (void * args) {
         ServiceListFilesRequest(sargs,con);
     } else if(sargs[0] == "download") {
         ServiceDownloadRequest(sargs,con);
+    } else if (sargs[0] == "retrieve_relevant") {
+        ServiceRetrieveRelevantRequest(sargs,con);
     } else {
 
     }

@@ -14,12 +14,17 @@
 
 extern int errno;
 using namespace std;
-string skey;
+string skey = "-1";
 int s_port;
 string s_ip;
 string username;
 
+struct User {
+    string username;
+    string ip;
+    int port;
 
+};
 
 class File {
 public:
@@ -173,6 +178,30 @@ void NotifyTracker(string msg, int sockfd) {
     }
     return;
 }
+/*
+    • Service Query for Available Pieces
+          If logged in,
+          Return Available Pieces for filename
+          */
+void  ServiceAvailablePiecesRequest(vector<string> sargs, conn_details con) {
+
+    if( skey != "-1") {
+        Notify("Peer not logged in\n", con.fd);
+        return;
+    }
+    string filename = sargs[1];
+    string ret = "";
+    if (auto i = sharedFiles.find(filename)) {
+        for(auto j = i->piecesAvailable.begin(); j != i->piecesAvailable.end(); j++) {
+            if(*j) ret += "1";
+            else ret += "0";
+        }
+    }
+    Notify(ret,con.fd);
+    return;
+
+}
+
 void  ServiceGroupJoinRequest(vector<string> sargs) {
 //    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 //    struct sockaddr_in saddr = GetTracker();
@@ -188,6 +217,28 @@ void  ServiceGroupJoinRequest(vector<string> sargs) {
     j.req_user = sargs[2];
     join_requests.push_back(j);
 
+
+}
+
+
+void ServiceRequestDownload (vector<string> sargs, conn_details con) {
+       /* • Service Request Download <filename, pieceno>
+        ◦ Open relevant file and start sending asked piece
+        */
+        string filename = sargs[0];
+        int pieceno = atoi(sargs[1]);
+
+        ifstream ifs;
+        string path = sharedFiles[filename]->path;
+        ifs.open(path, ios_base::binary) ;
+        ifs.seekg(pieceno * PSIZE );
+        char readdata[PSIZE+1];
+        ifs.read(readdata, PSIZE);
+        int readsize = ifs.gcount();
+        readdata[readsize] = 0;
+        string msg (readdata);
+        Notify (msg, con.fd);
+        ifs.close();
 
 }
 
@@ -207,11 +258,13 @@ void *  ServicePeerServerRequests (void * args) {
     if ( sargs[0] == "join_group") {
         ServiceGroupJoinRequest(sargs);
     }
+    else if (sargs[0] == "available_peer_request") {
 
+        ServiceAvailablePiecesRequest(sargs, con);
 
+    }
 
 }
-
 
 
 
@@ -507,17 +560,65 @@ int main (int argc, char* argv[]) {
             cout << GetMessage(sockfd)[0] << endl;
 
         } else if (input == "download") {
-            string gid, srcpath, destpath;
-            cin >> gid >> srcpath >> destpath;
-            NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
-            vector<string> sargs = GetMessage(sockfd);
+            string gid, filename, destpath;
+            cin >> gid >> filename >> destpath;
 
-        } else {
+            //Retrieve relevant peers, hash from tracker for the file,
+            //piecewise hash,file size,
+            NotifyTracker("retrieve_relevant;" + skey +
+                            ";"+gid+";"+filename+";",sockfd);
+            vector<string> sargs = GetMessage(sockfd);
+            if(sargs[0] == "You do not belong to this group") {
+
+                cout <<sargs[0]<<endl;
+                close(sockfd);
+                continue;
+            }
+            string hashoffile = sargs[0];
+            long long filesize = atoll(sargs[1]);
+            int numOfPieces = atoi(sargs[2]);
+            vector<string> piecehashes;
+            vector<User> relevantPeers;
+            for(int i = 0; i < numOfPieces; i++) {
+                piecehashes.push_back(sargs[i+3];
+            }
+            int numOfPeers = atoi(sargs[3+numOfPieces]);
+            for(int i = 0; i < numOfPeers; i++) {
+                struct User u;
+                u.username = sargs [4+numOfPieces+i];
+                u.ip = sargs [4+numOfPiece +i +1];
+                u.port = atoi ( sargs [4 +numOfPieces + i +2] );
+                relevantUsers.push_back(u);
+            }
+
+
+            //create NULL file, lots of bugs to fix
+
+
+
+
+
+
+
+
+
+
+
+
+             //NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
+        } else if (input == "show_downloads") {
+
+
+        }
+        else {
 
 
         }
         close(sockfd);
     }
+
+
+
 //request file
 //    char * buff = "file1.txt";
 //    send(sockfd, buff, strlen(buff), 0);
