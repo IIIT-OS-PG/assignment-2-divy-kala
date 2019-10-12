@@ -383,7 +383,7 @@ void ServiceGroupLeaveRequest( vector<string> sargs, conn_details con) {
         while (  j!= i->peerswithfile.end() ) {
 
             if( (*j)->username == req_uid ) {
-              //  cout << "deleted " << (*j)->username  << (*j)->ip<< flush;
+                //  cout << "deleted " << (*j)->username  << (*j)->ip<< flush;
 
                 j = i->peerswithfile.erase(j);
 
@@ -471,6 +471,44 @@ void ServiceListFilesRequest(vector<string>sargs,conn_details con) {
 
 }
 
+void ServiceDownloadRequest(vector<string> sargs, conn_details con) {
+    string skey = sargs[1];
+    string gid = sargs[2];
+    string srcpath = sargs[3];
+    string uid = skeytouname[skey];
+
+    //verify whether requesting user belongs to the group
+
+    pair<std::multimap<string,string>::iterator, std::multimap<string,string>::iterator>utog = unametogid.equal_range(uid);
+    bool authorized = false;
+    for( auto i = utog.first; i != utog.second; i++ ) {
+        if(i->second == gid) {
+            authorized = true;
+        }
+    }
+
+    //fetch relevant data
+    string msg = "";
+    Group * g = gidtogroup[gid];
+    for( auto i = g->files.begin(); i != g->files.end(); i++) {
+        if(i->filename == srcpath) {
+            msg += i->hashoffile + ";";
+            msg += to_string(i->piecehash.length()) + ";";
+            for (auto j = i->piecehash.begin();
+       //     msg +=
+        }
+
+    string hashoffile;
+    string filename;
+    vector<User*> peerswithfile;
+    vector<string> piecehash;
+
+    }
+
+
+
+}
+
 void * RequestHandler (void * args) {
     struct conn_details con = *(struct conn_details * )args;
     int remotesock = con.fd;
@@ -505,7 +543,8 @@ void * RequestHandler (void * args) {
         ServiceUploadRequest (sargs, con);
     } else if (sargs[0] == "list_files") {
         ServiceListFilesRequest(sargs,con);
-
+    } else if(sargs[0] == "download") {
+        ServiceDownloadRequest(sargs,con);
     } else {
 
     }

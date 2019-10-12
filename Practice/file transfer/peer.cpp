@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <errno.h>
+#include <openssl/sha.h>
 #define MAX_PARALLEL_REQUESTS 20
 
 //PEER
@@ -32,7 +33,60 @@ struct conn_details {
 };
 
 
+string GetSHA (string path) {
+    FILE *f = fopen (path.c_str(), "r");
+    if (f == NULL) {
+       cout << "couldn't compute hash because file could not be opened";
+       exit(-1);
 
+    }
+    unsigned char buff[8192];
+    SHA_CTX sha;
+
+    SHA1_Init(&sha);
+    while(true) {
+        size_t dataread;
+
+        dataread = fread(buff, 1, sizeof (buff), f);
+        if (dataread == 0)
+            break;
+        SHA1_Update(&sha, buff, dataread);
+    }
+    unsigned char  chash[ SHA_DIGEST_LENGTH];
+    fclose(f);
+    SHA1_Final(chash, &sha);
+    char schash[20];
+
+    for (int i = 0; i < 20; i++) {
+        sprintf(schash+i, "%02X", chash[i]);
+    }
+
+    string ret (schash);
+    ret = ret.substr(0,20);
+    return ret;
+
+}
+
+string GetSHAFromChars(char* str, int len)  {
+
+    unsigned char inputbuff[len] ;
+    for (int i = 0; i < len; i++) {
+        inputbuff[i] = str[i];
+    }
+    unsigned char obuff[20];
+
+    SHA1(inputbuff,len , obuff);
+    char schash[20];
+    for (int i = 0; i < 20; i++) {
+        sprintf(schash+i, "%02X", obuff[i]);
+    }
+
+    string ret (schash);
+    ret = ret.substr(0,20);
+    return ret;
+
+
+}
 
 sockaddr_in GetTracker() {
     struct sockaddr_in tracker;
@@ -206,6 +260,7 @@ vector <string> GetMessage(int sockfd) {
 
 int main (int argc, char* argv[]) {
     //get PeerServer ip,port from command line
+
     if(argc==3) {
         s_port = atoi(argv[2]);
         s_ip = argv[1];
@@ -214,8 +269,6 @@ int main (int argc, char* argv[]) {
         s_port = 50001;
         s_ip = "127.0.0.1";
     }
-
-
 
     //create PeerServer thread
     pthread_t tserv;
@@ -380,6 +433,13 @@ int main (int argc, char* argv[]) {
             cin >> gid;
             NotifyTracker("list_files;" + gid, sockfd);
             cout << GetMessage(sockfd)[0] << endl;
+
+        }
+        else if (input == "download") {
+            string gid, srcpath, destpath;
+            cin >> gid >> srcpath >> destpath;
+            NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
+            vector<string> sargs = GetMessage(sockfd);
 
         }
         else {
