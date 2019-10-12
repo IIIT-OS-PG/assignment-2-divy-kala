@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <openssl/sha.h>
+#define PSIZE (512*1024)
 #define MAX_PARALLEL_REQUESTS 20
 
 //PEER
@@ -17,7 +18,37 @@ string skey;
 int s_port;
 string s_ip;
 string username;
+
+
+
+class File {
+public:
+    File (string filename, string path, int numOfPieces, bool piecesAvail = false ) {
+
+        this->filename = filename;
+
+        this->path = path;
+        this->numOfPieces = numOfPieces;
+        for(int i =0 ; i < numOfPieces;i++)
+            piecesAvailable.push_back(piecesAvail);
+
+    }
+
+
+    string filename;
+    string path;
+    int numOfPieces;
+    vector<bool> piecesAvailable;
+    string hashoffile;
+    vector<string> piecehash;
+
+
+};
+
+
+unordered_map<string, File> sharedFiles;
 map<string, pair<string,string> > groups;
+
 struct join_request {
     string groupid;
     string req_user;
@@ -36,8 +67,8 @@ struct conn_details {
 string GetSHA (string path) {
     FILE *f = fopen (path.c_str(), "r");
     if (f == NULL) {
-       cout << "couldn't compute hash because file could not be opened";
-       exit(-1);
+        cout << "couldn't compute hash because file could not be opened";
+        exit(-1);
 
     }
     unsigned char buff[8192];
@@ -67,7 +98,7 @@ string GetSHA (string path) {
 
 }
 
-string GetSHAFromChars(char* str, int len)  {
+string GetSHAFromChars(char* str, int len = PSIZE)  {
 
     unsigned char inputbuff[len] ;
     for (int i = 0; i < len; i++) {
@@ -75,7 +106,7 @@ string GetSHAFromChars(char* str, int len)  {
     }
     unsigned char obuff[20];
 
-    SHA1(inputbuff,len , obuff);
+    SHA1(inputbuff,len, obuff);
     char schash[20];
     for (int i = 0; i < 20; i++) {
         sprintf(schash+i, "%02X", obuff[i]);
@@ -95,16 +126,16 @@ sockaddr_in GetTracker() {
     inet_pton (AF_INET, "127.0.0.1", &tracker.sin_addr);
     return tracker;
 }
-vector<string> GetArgs(char* buff) {
+vector<string> GetArgs(char* buff, char* delimit = ";") {
 
     vector<string> ret(0);
     char * saveptr;
 
-    char* tok = strtok_r(buff, ";", &saveptr);
+    char* tok = strtok_r(buff, delimit, &saveptr);
     string s (tok);
     ret.push_back(s);
 
-    while ( (tok = strtok_r(NULL, ";", &saveptr) )) {
+    while ( (tok = strtok_r(NULL, delimit, &saveptr) )) {
 
         string s (tok);
 
@@ -251,7 +282,7 @@ void * PeerServerListener  ( void * ) {
 
 vector <string> GetMessage(int sockfd) {
     char buff[10000];
-    int datarec = recv (sockfd, buff, 9999 , 0);
+    int datarec = recv (sockfd, buff, 9999, 0);
 
     vector<string> sargs = GetArgs(buff);
     return sargs;
@@ -403,46 +434,86 @@ int main (int argc, char* argv[]) {
                     break;
                 }
             }
-        }
-        else if (input == "leave_group") {
+        } else if (input == "leave_group") {
             string gid;
             cin >> gid;
             NotifyTracker ("leave_group;" + skey +";" + gid, sockfd);
             cout << GetMessage(sockfd)[0] << endl;
 
-        }
-        else if (input == "upload_file") {
+        } else if (input == "upload_file") {
             string path, gid;
             cin >> path >> gid;
-            string filehash = "hahahanohash";
-            int numOfPieces = 2;
+
+            //get file name
+            char tmp[path.length()];
+            strcpy(tmp,path.c_str());
+            vector <string> toks = GetArgs(tmp,"/");
+            string filename = toks[toks.size()-1] ;
+
+            //get file hash
+            string filehash = GetSHA(path);
+
+
+            //get file size
+            long long filesize = 0;
+            ifstream ifs (path, std::ifstream::binary);
+            if (ifs) {
+                ifs.seekg (0, ifs.end);
+                filesize = ifs.tellg();
+                ifs.seekg (0, ifs.beg);
+            } else {
+                cout << "file could not be opened";
+                exit(-1);
+            }
+
+
+            //get number of pieces and piece wise hash
+            int numOfPieces = ceil((float)filesize/PSIZE);
+            //cout << "pieces = " << numOfPieces << endl;
+           // cout << filehash << endl;
             string piecehash[numOfPieces];
-            piecehash[0] = "phash1";
-            piecehash[1] = "phash2";
-            string msg = "upload_file;" + skey +";" + gid + ";" + path + ";" + filehash + ";" + to_string(numOfPieces) + ";";
-            for(int i = 0;i < numOfPieces;i++) {
-               msg += piecehash[i] + ";";
+            for(int i = 0; i < numOfPieces; i++) {
+                char tmp[PSIZE];
+                ifs.read( tmp, PSIZE);
+
+                piecehash[i] = GetSHAFromChars(tmp, ifs.gcount());
+              //  cout << i <<". = " << piecehash[i] << endl;
+            }
+
+
+            ifs.close();
+
+
+            // send file details to tracker
+            string msg = "upload_file;" + skey +";" + gid + ";" + path
+                        + ";" + filename + ";" + to_string(filesize) + ";"
+                            +filehash + ";" + to_string(numOfPieces) + ";";
+            for(int i = 0; i < numOfPieces; i++) {
+                msg += piecehash[i] + ";";
             }
             NotifyTracker (msg, sockfd);
-
+            //TODO: TEST ON EMPTY FILE
             cout << GetMessage(sockfd)[0] << endl;
 
-        }
-        else if (input == "list_files") {
+
+
+            // update sharedfiles unordered_map with filename,
+            //path, available pieces etc
+            sharedFiles.emplace(filename, File(filename,path,numOfPieces, true));
+        } else if (input == "list_files") {
             string gid;
             cin >> gid;
             NotifyTracker("list_files;" + gid, sockfd);
             cout << GetMessage(sockfd)[0] << endl;
 
-        }
-        else if (input == "download") {
+        } else if (input == "download") {
             string gid, srcpath, destpath;
             cin >> gid >> srcpath >> destpath;
             NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
             vector<string> sargs = GetMessage(sockfd);
 
-        }
-        else {
+        } else {
+
 
         }
         close(sockfd);

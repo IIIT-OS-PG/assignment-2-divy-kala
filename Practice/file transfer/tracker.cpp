@@ -46,11 +46,12 @@ public:
 
 class File {
 public:
-    File (string hf, string fn, User* u, vector<string>ph ) {
+    File (string hf, string fn, User* u, vector<string>ph, long long fsize ) {
         hashoffile = hf;
         filename = fn;
         peerswithfile.push_back(u);
         piecehash = ph;
+        filesize = fsize;
 
     }
 
@@ -58,6 +59,7 @@ public:
     string filename;
     vector<User*> peerswithfile;
     vector<string> piecehash;
+    long long filesize;
 
 
 };
@@ -412,13 +414,19 @@ void ServiceUploadRequest (vector<string> sargs, conn_details con) {
     string skey = sargs[1];
     string gid = sargs[2];
     string path = sargs[3];
-    string filehash = sargs[4];
-    string numOfPiecesS = sargs[5];
+    string filename = sargs[4];
+    long long filesize = atoll(sargs[5].c_str());
+    string filehash = sargs[6];
+    string numOfPiecesS = sargs[7];
     int numOfPieces = atoi(numOfPiecesS.c_str());
+
     vector<string> piecehash(numOfPieces);
     for(int i = 0; i < numOfPieces; i++) {
-        piecehash[i] = sargs[6+i];
+        piecehash[i] = sargs[8+i];
     }
+
+
+
     string uid = skeytouname[skey];
     User * u= unametouser[uid];
     string actualgid = unametogid.find(uid)->second;
@@ -428,7 +436,7 @@ void ServiceUploadRequest (vector<string> sargs, conn_details con) {
     }
     Group * g = gidtogroup[gid];
     for( auto i = g->files.begin(); i != g->files.end(); i++) {
-        if(i->filename == path) {
+        if(i->filename == filename) {
             if(i->hashoffile == filehash) {
 
                 i->peerswithfile.push_back(u);
@@ -444,7 +452,7 @@ void ServiceUploadRequest (vector<string> sargs, conn_details con) {
         }
 
     }
-    g->files.push_back( File(filehash, path, u, piecehash) );
+    g->files.push_back( File(filehash, filename, u, piecehash, filesize) );
     //  g->files.back().peerswithfile.push_back(u);
     Notify("File details successfully shared with tracker",con.fd);
 
@@ -488,25 +496,25 @@ void ServiceDownloadRequest(vector<string> sargs, conn_details con) {
     }
 
     //fetch relevant data
-    string msg = "";
-    Group * g = gidtogroup[gid];
-    for( auto i = g->files.begin(); i != g->files.end(); i++) {
-        if(i->filename == srcpath) {
-            msg += i->hashoffile + ";";
-            msg += to_string(i->piecehash.length()) + ";";
-            for (auto j = i->piecehash.begin();
-       //     msg +=
-        }
+//    string msg = "";
+//    Group * g = gidtogroup[gid];
+//    for( auto i = g->files.begin(); i != g->files.end(); i++) {
+//        if(i->filename == srcpath) {
+//            msg += i->hashoffile + ";";
+//            msg += to_string(i->piecehash.length()) + ";";
+//            for (auto j = i->piecehash.begin();
+//       //     msg +=
+//        }
+//
+//    string hashoffile;
+//    string filename;
+//    vector<User*> peerswithfile;
+//    vector<string> piecehash;
 
-    string hashoffile;
-    string filename;
-    vector<User*> peerswithfile;
-    vector<string> piecehash;
-
-    }
+//    }
 
 
-
+    return;
 }
 
 void * RequestHandler (void * args) {
