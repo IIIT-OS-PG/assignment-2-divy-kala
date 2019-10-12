@@ -18,15 +18,13 @@ pthread_mutex_t sessionkeymutex = PTHREAD_MUTEX_INITIALIZER;
 static int sessionkey = 1000;
 vector<string> GetArgs(char* buff);
 void InitializeUsers() ;
-struct conn_details
-{
+struct conn_details {
     int fd;
     string ip;
     int port;
 };
 
-class User
-{
+class User {
 public:
     string username;
     string password;
@@ -34,8 +32,7 @@ public:
     int port;
     bool loggedin;
 
-    User (string username, string password, string ip, int port, bool loggedin)
-    {
+    User (string username, string password, string ip, int port, bool loggedin) {
         this->username = username;
         this->ip = ip;
         this->port = port;
@@ -48,7 +45,15 @@ public:
 
 
 class File {
-    public:
+public:
+    File (string hf, string fn, User* u, vector<string>ph ) {
+        hashoffile = hf;
+        filename = fn;
+        peerswithfile.push_back(u);
+        piecehash = ph;
+
+    }
+
     string hashoffile;
     string filename;
     vector<User*> peerswithfile;
@@ -79,16 +84,14 @@ map<string, string> skeytouname;
 map<string, User*> unametouser;
 map<string, Group *> gidtogroup;
 multimap<string, string> unametogid;
-int main()
-{
+int main() {
     //read registered users from per tracker file
     InitializeUsers ();
 
     //server
     int serverfd;
     serverfd = socket(AF_INET, SOCK_STREAM, 0);
-    if ( serverfd == -1 )
-    {
+    if ( serverfd == -1 ) {
         cout << "Sender socket creation failed.";
         exit(-1);
     }
@@ -101,15 +104,13 @@ int main()
 
 
     int bret = bind(serverfd,(struct sockaddr *) &saddr, sizeof(saddr));
-    if(bret)
-    {
+    if(bret) {
         cout << "couldnt bind \n";
         exit(-1);
     }
 
 
-    if ( listen(serverfd,5) )
-    {
+    if ( listen(serverfd,5) ) {
         cout << "listening failed" << endl;
         exit(-1);
     }
@@ -117,11 +118,9 @@ int main()
     pthread_t tids[MAX_PARALLEL_REQUESTS];
     int i = 0;
     int remotesock[MAX_PARALLEL_REQUESTS];
-    while(true)
-    {
+    while(true) {
         remotesock[i] = accept(serverfd,(struct sockaddr *) &saddr,(socklen_t*) &x  );
-        if(remotesock[i] == -1)
-        {
+        if(remotesock[i] == -1) {
 
             cout << "connnection accepting failed. remote sock is " << remotesock[i] << endl;
             exit(-1);
@@ -131,18 +130,15 @@ int main()
         con.ip = inet_ntoa(saddr.sin_addr );
         con.port = ntohs(saddr.sin_port);
         int newthread = pthread_create(&tids[i], NULL, RequestHandler, &con);
-        if( newthread != 0)
-        {
+        if( newthread != 0) {
             cout << "Failed to launch RequestHandler, exiting";
             exit(-1);
         }
 
         i++;
-        if( i >= MAX_PARALLEL_REQUESTS)
-        {
+        if( i >= MAX_PARALLEL_REQUESTS) {
 
-            for (int j = 0; j < i; j++)
-            {
+            for (int j = 0; j < i; j++) {
                 pthread_join(tids[j], NULL);
             }
             i=0;
@@ -152,27 +148,27 @@ int main()
 
 
     }
-//    char buff[1000];
-//
-//    int datarec = recv (remotesock, buff, 999, 0);
-//    buff[datarec] = '\0';
-//
-//    cout << buff << " is requested.\n";
-//    FILE * reqfile = fopen( buff, "r");
-//    fseek(reqfile, 0, SEEK_END);
-//    long sizeoffile = ftell (reqfile);
-//    rewind(reqfile);
-//    send(remotesock, &sizeoffile, sizeof(sizeoffile), 0);
-//    int r;
-//    while ( (r =  fread( buff, sizeof(char), 999, reqfile) )!= 0 ) {
-//    	cout << "r : " << r << endl;
-//        buff[r] = '\0';
-//        cout << "sending " << buff << endl << endl;
-//        send(remotesock, buff, r+1, 0);
-//
-//    }
+    //    char buff[1000];
+    //
+    //    int datarec = recv (remotesock, buff, 999, 0);
+    //    buff[datarec] = '\0';
+    //
+    //    cout << buff << " is requested.\n";
+    //    FILE * reqfile = fopen( buff, "r");
+    //    fseek(reqfile, 0, SEEK_END);
+    //    long sizeoffile = ftell (reqfile);
+    //    rewind(reqfile);
+    //    send(remotesock, &sizeoffile, sizeof(sizeoffile), 0);
+    //    int r;
+    //    while ( (r =  fread( buff, sizeof(char), 999, reqfile) )!= 0 ) {
+    //    	cout << "r : " << r << endl;
+    //        buff[r] = '\0';
+    //        cout << "sending " << buff << endl << endl;
+    //        send(remotesock, buff, r+1, 0);
+    //
+    //    }
     //  fclose(reqfile);
-//    close(remotesock);
+    //    close(remotesock);
     close(serverfd);
 
 
@@ -180,8 +176,7 @@ int main()
     return 0;
 }
 
-void ServiceRegisterRequest( vector<string> sargs, struct conn_details con )
-{
+void ServiceRegisterRequest( vector<string> sargs, struct conn_details con ) {
 
     FILE * fp = fopen ("userdata.txt", "a");
     string s = "\n" + sargs[1] + ";" + sargs[2];
@@ -203,7 +198,8 @@ void InitializeUsers () {
     while (!userfile.eof() ) {
         string line;
         userfile >> line;
-        if (userfile.eof()) break;
+        if (userfile.eof())
+            break;
         char buff[1000];
         strcpy(buff, line.c_str());
         vector<string> sargs = GetArgs(buff);
@@ -218,39 +214,33 @@ void InitializeUsers () {
 
 }
 
-void Notify(string msg, int sockfd)
-{
+void Notify(string msg, int sockfd) {
     char cmsg[msg.length()+1];
     for(int i = 0; i < msg.length(); i++ ) {
-    	cmsg[i] = msg.c_str()[i];
+        cmsg[i] = msg.c_str()[i];
     }
- //   strcpy(cmsg, msg.c_str());
+    //   strcpy(cmsg, msg.c_str());
     cmsg[msg.length()] = '\0';
     char * buff = cmsg;
     send(sockfd, buff, strlen(buff)+1, 0);
     return;
 }
 
-int GenerateSessionKey ()
-{
+int GenerateSessionKey () {
     pthread_mutex_lock( &sessionkeymutex );
     int tmp = sessionkey++;
     pthread_mutex_unlock( &sessionkeymutex );
     return tmp;
 }
 
-void ServiceLoginRequest( vector<string> sargs, struct conn_details con)
-{
+void ServiceLoginRequest( vector<string> sargs, struct conn_details con) {
     string msg = "User not registered";
 
-    for( auto i = unametouser.begin(); i != unametouser.end(); i++)
-    {
+    for( auto i = unametouser.begin(); i != unametouser.end(); i++) {
 
-        if(i->second->username == sargs[1])
-        {
+        if(i->second->username == sargs[1]) {
 
-            if(i->second->password == sargs[2] )
-            {
+            if(i->second->password == sargs[2] ) {
                 msg = "Login successful";
                 i->second->loggedin = true;
                 i->second->ip = sargs[3];
@@ -262,9 +252,7 @@ void ServiceLoginRequest( vector<string> sargs, struct conn_details con)
 
 
                 break;
-            }
-            else
-            {
+            } else {
                 msg = "Password wrong";
                 break;
             }
@@ -274,8 +262,7 @@ void ServiceLoginRequest( vector<string> sargs, struct conn_details con)
     }
     Notify(msg, con.fd);
 }
-vector<string> GetArgs(char* buff)
-{
+vector<string> GetArgs(char* buff) {
 
     vector<string> ret(0);
     char * saveptr;
@@ -284,8 +271,7 @@ vector<string> GetArgs(char* buff)
     string s (tok);
     ret.push_back(s);
 
-    while ( (tok = strtok_r(NULL, ";", &saveptr) ))
-    {
+    while ( (tok = strtok_r(NULL, ";", &saveptr) )) {
 
         string s (tok);
 
@@ -296,8 +282,7 @@ vector<string> GetArgs(char* buff)
     return ret;
 }
 
-void ServiceLogoutRequest( vector<string> sargs)
-{
+void ServiceLogoutRequest( vector<string> sargs) {
 
     unametouser[skeytouname[sargs[1]]]->loggedin = false;
     skeytouname.erase(sargs[1]);
@@ -305,32 +290,32 @@ void ServiceLogoutRequest( vector<string> sargs)
 }
 void ServiceGroupsFetchRequest (vector<string> sargs, struct conn_details con) {
     string ret = "";
-    for( auto i = gidtogroup.begin(); i != gidtogroup.end(); i++)
-    {
+    for( auto i = gidtogroup.begin(); i != gidtogroup.end(); i++) {
         ret += i->first + ";" + i->second->owner->ip + ";" + to_string(i->second->owner->port) + ";";
 
 
     }
-    if( ret == "") ret = "No groups";
+    if( ret == "")
+        ret = "No groups";
 
     Notify(ret,con.fd);
 
 
 }
-void ServiceCreateGroupRequest( vector<string> sargs)
-{
+void ServiceCreateGroupRequest( vector<string> sargs) {
 
     //Update groups. Create new Group object, set owner. Make this user member by updating map<usr,grp>.
 
 
     string gid = sargs[1];
     string skey = sargs[2];
-    if(skey == "-1") return;
+    if(skey == "-1")
+        return;
     User * o = unametouser[skeytouname[skey]];
     Group * g = new Group (o, gid);
     gidtogroup[gid] = g;
     unametogid.emplace(o->username, gid);
-//    unametogid[o->username] = gid;
+    //    unametogid[o->username] = gid;
 
 
 }
@@ -341,13 +326,16 @@ void ServiceGroupAcceptRequest( vector<string> sargs, conn_details con) {
     string gid = sargs[3];
 
     string requestingUid = skeytouname[skey];
-    if (gidtogroup[gid]->owner->username == requestingUid) {
-     //   unametogid[uid] = gid;
-        unametogid.emplace(uid, gid);
-        Notify("Acceptance acknowledged by tracker", con.fd);
-        return;
+
+    if (gidtogroup.find(gid) != gidtogroup.end() && gidtogroup[gid]->owner->username == requestingUid) {
+        //   unametogid[uid] = gid;
+        if(unametouser.find(uid) != unametouser.end()) {
+            unametogid.emplace(uid, gid);
+            Notify("Acceptance acknowledged by tracker", con.fd);
+            return;
+        }
     }
-    Notify("Error occured, are you the owner of the group?", con.fd);
+    Notify("Error occured", con.fd);
     return;
 
 
@@ -359,6 +347,8 @@ void ServiceGroupLeaveRequest( vector<string> sargs, conn_details con) {
     string gid = sargs[2];
     string req_uid = skeytouname[skey];
 
+
+    //delete entry of uname,gid in unametogid multimap
     pair<std::multimap<string,string>::iterator, std::multimap<string,string>::iterator>utog = unametogid.equal_range(req_uid);
     bool left = false;
     for( auto i = utog.first; i != utog.second; i++ ) {
@@ -369,72 +359,155 @@ void ServiceGroupLeaveRequest( vector<string> sargs, conn_details con) {
             break;
         }
     }
-    //TODO delete group if owner deleted
-    //TODO THIS CODE TO REMOVE USER FROM SHARED GROUP FILES HAS NOT BEEN TESTED YET
+
+
     Group *group = gidtogroup[gid];
     User *u = unametouser[req_uid];
-    for (auto i = group->files.begin() ; i != group->files.end(); i++ ) {
-        for ( auto j = i->peerswithfile.begin(); j!= i->peerswithfile.end(); j++) {
-            if( (*j)->username == req_uid ) {
-                cout << "deleted " << (*j)->username  << (*j)->ip<< flush;
-                i->peerswithfile.erase(j);
 
+    // delete group if owner deleted
+    if (group->owner->username == u->username) {
+        gidtogroup.erase(gid);
+        delete group;
+        return;
+    }
+
+    //TODO THIS CODE TO REMOVE USER FROM SHARED GROUP FILES HAS NOT BEEN TESTED YET
+//    for (auto i = group->files.begin() ; i != group->files.end(); i++ ) {
+//        for ( auto j = i->peerswithfile.begin(); j!= i->peerswithfile.end(); j++) {
+    auto i = group->files.begin() ;
+    auto j = i->peerswithfile.begin();
+
+    while (i != group->files.end() ) {
+        j = i->peerswithfile.begin();
+        bool del = false;
+        while (  j!= i->peerswithfile.end() ) {
+
+            if( (*j)->username == req_uid ) {
+              //  cout << "deleted " << (*j)->username  << (*j)->ip<< flush;
+
+                j = i->peerswithfile.erase(j);
+
+                if(i->peerswithfile.empty()) {
+                    i = group->files.erase(i);
+                    del = true;
+                    break;
+                }
+                continue;
             }
+
+            j++;
+
         }
+        if(!del)
+            i++;
     }
     if (left == false) {
-         Notify("Group leaving failed, were you part of the group?", con.fd);
+        Notify("Group leaving failed, were you part of the group?", con.fd);
     }
-
-
 
     return;
 }
 
+void ServiceUploadRequest (vector<string> sargs, conn_details con) {
+    string skey = sargs[1];
+    string gid = sargs[2];
+    string path = sargs[3];
+    string filehash = sargs[4];
+    string numOfPiecesS = sargs[5];
+    int numOfPieces = atoi(numOfPiecesS.c_str());
+    vector<string> piecehash(numOfPieces);
+    for(int i = 0; i < numOfPieces; i++) {
+        piecehash[i] = sargs[6+i];
+    }
+    string uid = skeytouname[skey];
+    User * u= unametouser[uid];
+    string actualgid = unametogid.find(uid)->second;
+    if( actualgid != gid) {
+        Notify("You do not belong to this group",con.fd);
+        return;
+    }
+    Group * g = gidtogroup[gid];
+    for( auto i = g->files.begin(); i != g->files.end(); i++) {
+        if(i->filename == path) {
+            if(i->hashoffile == filehash) {
 
-void * RequestHandler (void * args)
-{
+                i->peerswithfile.push_back(u);
+                Notify("File details successfully shared (already existed)",con.fd);
+                //     for( auto i = g->files.begin() ;  i != g->files.end(); i++) {
+                //         cout << "lalala " << g->groupid << "  " << i->filename << "  " << i-> hashoffile << " " <<i->piecehash[0] << endl << flush;
+                //     }
+                return;
+            } else {
+                Notify("File with same name but different content already exists",con.fd);
+                return;
+            }
+        }
+
+    }
+    g->files.push_back( File(filehash, path, u, piecehash) );
+    //  g->files.back().peerswithfile.push_back(u);
+    Notify("File details successfully shared with tracker",con.fd);
+
+//    for( auto i = g->files.begin() ;  i != g->files.end(); i++) {
+//        cout << g->groupid << "  " << i->filename << "  " << i-> hashoffile << " " <<i->piecehash[0] << endl << flush;
+//    }
+    return;
+
+
+
+}
+
+void ServiceListFilesRequest(vector<string>sargs,conn_details con) {
+
+    string gid = sargs[1];
+    Group *g = gidtogroup[gid];
+    string msg = "";
+    for (auto i = g->files.begin() ; i != g->files.end(); i++) {
+        msg += i->filename + "\t";
+    }
+    Notify(msg, con.fd);
+
+    return;
+
+}
+
+void * RequestHandler (void * args) {
     struct conn_details con = *(struct conn_details * )args;
     int remotesock = con.fd;
-    char buff[1000];
+    char buff[10000];
 
-    int datarec = recv (remotesock, buff, 999, 0);
+    int datarec = recv (remotesock, buff, 10000, 0);
 
     if(datarec ==0) {
-       close(remotesock);
-    pthread_exit(NULL);
+        close(remotesock);
+        pthread_exit(NULL);
     }
     cout << "Command received: " << buff << " \n" << flush;
     vector<string> sargs = GetArgs(buff);
 
-    if ( sargs[0] == "create_user")
-    {
+    if ( sargs[0] == "create_user") {
         ServiceRegisterRequest(sargs, con);
-    }
-    else if ( sargs[0] == "login" )
-    {
+    } else if ( sargs[0] == "login" ) {
         ServiceLoginRequest(sargs, con);
-    }
-    else if (sargs[0] == "logout" )
-    {
+    } else if (sargs[0] == "logout" ) {
         ServiceLogoutRequest(sargs);
-    }
-    else if (sargs[0] == "create_group" )
-    {
+    } else if (sargs[0] == "create_group" ) {
         ServiceCreateGroupRequest(sargs);
-    }
-    else if (sargs[0] == "list_groups" )
-    {
+    } else if (sargs[0] == "list_groups" ) {
         ServiceGroupsFetchRequest(sargs, con);
-    }
-    else if (sargs[0] == "nop") {
+    } else if (sargs[0] == "nop") {
 
-    }
-    else if (sargs[0] == "accept_request") {
+    } else if (sargs[0] == "accept_request") {
         ServiceGroupAcceptRequest (sargs, con);
-    }
-    else if (sargs[0] == "leave_group") {
+    } else if (sargs[0] == "leave_group") {
         ServiceGroupLeaveRequest (sargs, con);
+    } else if (sargs[0] == "upload_file") {
+        ServiceUploadRequest (sargs, con);
+    } else if (sargs[0] == "list_files") {
+        ServiceListFilesRequest(sargs,con);
+
+    } else {
+
     }
 
 

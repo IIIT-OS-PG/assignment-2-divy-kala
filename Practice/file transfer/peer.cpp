@@ -196,8 +196,8 @@ void * PeerServerListener  ( void * ) {
 }
 
 vector <string> GetMessage(int sockfd) {
-    char buff[1000];
-    int datarec = recv (sockfd, buff, 999, 0);
+    char buff[10000];
+    int datarec = recv (sockfd, buff, 9999 , 0);
 
     vector<string> sargs = GetArgs(buff);
     return sargs;
@@ -280,7 +280,7 @@ int main (int argc, char* argv[]) {
             vector<string> sargs = GetMessage(sockfd);
             if(sargs[0] == "No groups") {
 
-                cout << sargs[0];
+                cout << sargs[0] << endl;
                 close(sockfd);
                 continue;
 
@@ -314,6 +314,11 @@ int main (int argc, char* argv[]) {
 
             string groupid;
             cin >> groupid;
+            if(groups.find(groupid) == groups.end() ) {
+                cout << "Such a group does not exist" << endl;
+                close(sockfd);
+                continue;
+            }
             string ip = groups [groupid].first;
             int port = atoi(groups[groupid].second.c_str());
 
@@ -327,6 +332,7 @@ int main (int argc, char* argv[]) {
             int joingrppeer = connect (peerfd,(struct sockaddr*) &peer, sizeof(peer) );
             Notify("join_group;"+groupid+";"+username, peerfd);
             close(peerfd);
+            continue;
 
         } else if (input == "list_requests") {
             for(int i = 0; i < join_requests.size(); i++) {
@@ -350,6 +356,33 @@ int main (int argc, char* argv[]) {
             cin >> gid;
             NotifyTracker ("leave_group;" + skey +";" + gid, sockfd);
             cout << GetMessage(sockfd)[0] << endl;
+
+        }
+        else if (input == "upload_file") {
+            string path, gid;
+            cin >> path >> gid;
+            string filehash = "hahahanohash";
+            int numOfPieces = 2;
+            string piecehash[numOfPieces];
+            piecehash[0] = "phash1";
+            piecehash[1] = "phash2";
+            string msg = "upload_file;" + skey +";" + gid + ";" + path + ";" + filehash + ";" + to_string(numOfPieces) + ";";
+            for(int i = 0;i < numOfPieces;i++) {
+               msg += piecehash[i] + ";";
+            }
+            NotifyTracker (msg, sockfd);
+
+            cout << GetMessage(sockfd)[0] << endl;
+
+        }
+        else if (input == "list_files") {
+            string gid;
+            cin >> gid;
+            NotifyTracker("list_files;" + gid, sockfd);
+            cout << GetMessage(sockfd)[0] << endl;
+
+        }
+        else {
 
         }
         close(sockfd);
