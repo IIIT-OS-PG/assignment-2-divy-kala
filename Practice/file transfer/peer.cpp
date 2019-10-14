@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <time.h>
 #define PSIZE (512*1024)
-#define MAX_PARALLEL_REQUESTS 50
+#define MAX_PARALLEL_REQUESTS 60
 
 //PEER
 
@@ -31,6 +31,7 @@ struct User {
 struct piece {
 
     string ip;
+    string piecehash;
     int port;
     string destpath;
     string srcfilename;
@@ -81,7 +82,33 @@ struct conn_details {
     string ip;
     int port;
 };
+string GetSHAIncrementally ( char * buffer, int len) {
 
+    unsigned char buff[len];
+    for (int i = 0; i < len; i++) {
+        buff[i] = buffer[i];
+    }
+    SHA_CTX sha;
+
+    SHA1_Init(&sha);
+
+
+    SHA1_Update(&sha, buff, len);
+
+    unsigned char  chash[ SHA_DIGEST_LENGTH];
+
+    SHA1_Final(chash, &sha);
+    char schash[20];
+
+    for (int i = 0; i < 20; i++) {
+        sprintf(schash+i, "%02X", chash[i]);
+    }
+
+    string ret (schash);
+    ret = ret.substr(0,20);
+    return ret;
+
+}
 
 string GetSHA (string path) {
     FILE *f = fopen (path.c_str(), "r");
@@ -266,7 +293,7 @@ void ServiceRequestDownload (vector<string> sargs, conn_details con) {
     ifs.read(readdata, PSIZE);
     int readsize = ifs.gcount();
     ifs.close();
-    cout << "Piece request served: " << pieceno << " Bytes = " <<  readsize <<endl << flush;
+ //   cout << "Piece request served: " << pieceno << " Bytes = " <<  readsize <<endl << flush;
     send (con.fd, readdata, readsize, 0);
 
 //    string msg (readdata);
@@ -324,9 +351,9 @@ void * DownloadFromPeers ( void * args) {
         cout << "Connection to peer failed while downloading" << endl;
         exit(-1);
     }
-    cout << "Piece request sent: " << pie.pieceno << endl << flush;
+   // cout << "Piece request sent: " << pie.pieceno << endl << flush;
     string msg = "download_piece;" + pie.srcfilename + ";" + to_string(pie.pieceno) +";";
-    cout << msg << endl << flush;
+//    cout << msg << endl << flush;
     Notify(msg,sockfd);
 
 //
@@ -345,27 +372,93 @@ void * DownloadFromPeers ( void * args) {
 
 
 
-    char buffer[8192];
-    int length = PSIZE;
-    int total = 0;
+//    char buffer[8192];
+//    int length = PSIZE;
+//    int total = 0;
+//    int count;
+//    ofstream destfile;
+//    destfile.open(pie.destpath, ios_base::binary | ios_base::out);
+//    destfile.seekp(pie.pieceno * PSIZE);
+//
+//    while (total < length && (count = recv(sockfd, buffer, min(8192, length-total), 0)) > 0)
+//    {
+//
+//
+//        destfile.write(buffer,count);
+//        total += count;
+//    }
+
+
+    char buffer[PSIZE];
+    long long total = 0;
     int count;
+
     ofstream destfile;
-    destfile.open(pie.destpath, ios_base::binary | ios_base::out);
+    destfile.open(pie.destpath, ios_base::binary | ios_base::out | ios_base::in);
     destfile.seekp(pie.pieceno * PSIZE);
 
-    while (total < length && (count = recv(sockfd, buffer, min(8192, length-total), 0)) > 0)
-    {
 
+//  FILE * dFile;
+//  dFile = fopen ( pie.destpath , "wb" );
+//  fputs ( "This is an apple." , pFile );
+//  fseek ( pFile , 9 , SEEK_SET );
+//  fputs ( " sam" , pFile );
+//  fclose ( pFile );
+
+
+
+
+    SHA_CTX sha;
+
+    SHA1_Init(&sha);
+
+//size_t fwrite(const void *ptr, size_t size, size_t nmemb,
+//                     FILE *stream);
+
+
+
+//  destfile.write(buffer,count);
+//  pthread_mutex_lock( &destfilemutex );
+//
+//        pthread_mutex_unlock( &destfilemutex );
+
+
+
+
+    while ( (count = recv(sockfd, buffer, PSIZE, 0)) > 0) {
 
         destfile.write(buffer,count);
         total += count;
+
+        unsigned char buff[count];
+        for (int i = 0; i < count; i++) {
+            buff[i] = buffer[i];
+        }
+        SHA1_Update(&sha, buff, count);
     }
+
+
+    unsigned char  chash[ SHA_DIGEST_LENGTH];
+
+    SHA1_Final(chash, &sha);
+    char schash[20];
+
+    for (int i = 0; i < 20; i++) {
+        sprintf(schash+i, "%02X", chash[i]);
+    }
+
+    string ret (schash);
+    ret = ret.substr(0,20);
 
 
     destfile.close();
 
 
-cout << "Piece no " << pie.pieceno << "\t bytes = " << total << endl << flush;
+    //  cout << "Piece no " << pie.pieceno << "\t bytes = " << total << endl << flush;
+    if (ret == pie.piecehash) {
+        cout << pie.pieceno << " sahi h" << endl;
+
+    }
 
 
 
@@ -374,9 +467,7 @@ cout << "Piece no " << pie.pieceno << "\t bytes = " << total << endl << flush;
 
 
 
-
-
-
+//
 //    ofstream destfile;
 //    pthread_mutex_lock( &destfilemutex );
 //
@@ -485,7 +576,7 @@ int main (int argc, char* argv[]) {
     string input = "";
     skey = "-1";
     while (input != "quit") {
-        cout << "#";
+        cout << "#" << flush;
         cin >> input;
         int sockfd = socket(AF_INET, SOCK_STREAM, 0);
         struct sockaddr_in saddr = GetTracker();;
@@ -830,7 +921,7 @@ int main (int argc, char* argv[]) {
                 //select peer to get piece from
 
                 long long random = rand() % piecespeer[k].size();
-
+                pie[k].piecehash = piecehashes[k];
                 pie[k].pieceno = k;
                 pie[k].destpath = destpath;
                 pie[k].srcfilename = filename;
