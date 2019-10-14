@@ -293,7 +293,7 @@ void ServiceRequestDownload (vector<string> sargs, conn_details con) {
     ifs.read(readdata, PSIZE);
     int readsize = ifs.gcount();
     ifs.close();
- //   cout << "Piece request served: " << pieceno << " Bytes = " <<  readsize <<endl << flush;
+//   cout << "Piece request served: " << pieceno << " Bytes = " <<  readsize <<endl << flush;
     send (con.fd, readdata, readsize, 0);
 
 //    string msg (readdata);
@@ -332,29 +332,29 @@ void *  ServicePeerServerRequests (void * args) {
 
 void * DownloadFromPeers ( void * args) {
 
-
+    string cond = "";
     struct piece pie = *(struct piece * )args;
-
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-
-
-
-    struct sockaddr_in peer;
-    peer.sin_family = AF_INET;
-    peer.sin_port = htons(pie.port);
-    inet_pton (AF_INET, pie.ip.c_str(), &peer.sin_addr);
+    do {
+        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
 
-    struct sockaddr_in saddr = peer;
-    int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
-    if( connectret != 0) {
-        cout << "Connection to peer failed while downloading" << endl;
-        exit(-1);
-    }
-   // cout << "Piece request sent: " << pie.pieceno << endl << flush;
-    string msg = "download_piece;" + pie.srcfilename + ";" + to_string(pie.pieceno) +";";
+
+        struct sockaddr_in peer;
+        peer.sin_family = AF_INET;
+        peer.sin_port = htons(pie.port);
+        inet_pton (AF_INET, pie.ip.c_str(), &peer.sin_addr);
+
+
+        struct sockaddr_in saddr = peer;
+        int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
+        if( connectret != 0) {
+            cout << "Connection to peer failed while downloading" << endl;
+            exit(-1);
+        }
+        // cout << "Piece request sent: " << pie.pieceno << endl << flush;
+        string msg = "download_piece;" + pie.srcfilename + ";" + to_string(pie.pieceno) +";";
 //    cout << msg << endl << flush;
-    Notify(msg,sockfd);
+        Notify(msg,sockfd);
 
 //
 //    char buff[PSIZE];
@@ -389,13 +389,13 @@ void * DownloadFromPeers ( void * args) {
 //    }
 
 
-    char buffer[PSIZE];
-    long long total = 0;
-    int count;
+        char buffer[PSIZE];
+        long long total = 0;
+        int count;
 
-    ofstream destfile;
-    destfile.open(pie.destpath, ios_base::binary | ios_base::out | ios_base::in);
-    destfile.seekp(pie.pieceno * PSIZE);
+        ofstream destfile;
+        destfile.open(pie.destpath, ios_base::binary | ios_base::out | ios_base::in);
+        destfile.seekp(pie.pieceno * PSIZE);
 
 
 //  FILE * dFile;
@@ -408,9 +408,9 @@ void * DownloadFromPeers ( void * args) {
 
 
 
-    SHA_CTX sha;
+        SHA_CTX sha;
 
-    SHA1_Init(&sha);
+        SHA1_Init(&sha);
 
 //size_t fwrite(const void *ptr, size_t size, size_t nmemb,
 //                     FILE *stream);
@@ -425,61 +425,45 @@ void * DownloadFromPeers ( void * args) {
 
 
 
-    while ( (count = recv(sockfd, buffer, PSIZE, 0)) > 0) {
+        while ( (count = recv(sockfd, buffer, PSIZE, 0)) > 0) {
 
-        destfile.write(buffer,count);
-        total += count;
+            destfile.write(buffer,count);
+            total += count;
 
-        unsigned char buff[count];
-        for (int i = 0; i < count; i++) {
-            buff[i] = buffer[i];
+            unsigned char buff[count];
+            for (int i = 0; i < count; i++) {
+                buff[i] = buffer[i];
+            }
+            SHA1_Update(&sha, buff, count);
         }
-        SHA1_Update(&sha, buff, count);
-    }
 
 
-    unsigned char  chash[ SHA_DIGEST_LENGTH];
+        unsigned char  chash[ SHA_DIGEST_LENGTH];
 
-    SHA1_Final(chash, &sha);
-    char schash[20];
+        SHA1_Final(chash, &sha);
+        char schash[20];
 
-    for (int i = 0; i < 20; i++) {
-        sprintf(schash+i, "%02X", chash[i]);
-    }
+        for (int i = 0; i < 20; i++) {
+            sprintf(schash+i, "%02X", chash[i]);
+        }
 
-    string ret (schash);
-    ret = ret.substr(0,20);
+        string ret (schash);
+        ret = ret.substr(0,20);
+        cond = ret;
 
-
-    destfile.close();
-
-
-    //  cout << "Piece no " << pie.pieceno << "\t bytes = " << total << endl << flush;
-    if (ret == pie.piecehash) {
-        cout << pie.pieceno << " sahi h" << endl;
-
-    }
+        destfile.close();
 
 
+        close(sockfd);
+        //  cout << "Piece no " << pie.pieceno << "\t bytes = " << total << endl << flush;
+    } while (cond != pie.piecehash);
 
 
+    pthread_mutex_lock( &destfilemutex );
+    sharedFiles[pie.srcfilename].piecesAvailable[pie.pieceno] = true;
+    pthread_mutex_unlock( &destfilemutex );
 
 
-
-
-//
-//    ofstream destfile;
-//    pthread_mutex_lock( &destfilemutex );
-//
-//
-//    destfile.open(pie.destpath, ios_base::binary | ios_base::out);
-//    destfile.seekp(pie.pieceno * PSIZE);
-//    destfile.write(buff,datarec);
-//
-//
-//    pthread_mutex_unlock( &destfilemutex );
-
-    close(sockfd);
 
 
 }
@@ -953,10 +937,10 @@ int main (int argc, char* argv[]) {
             }
 
             if (GetSHA(destpath) == hashoffile) {
-                cout << "same hai" << flush;
+                cout << "File downloaded, file integrity checked" << flush;
 
             } else {
-                cout << "galat" << flush;
+                cout << "File download failed. Try again" << flush;
             }
 
 
