@@ -911,7 +911,7 @@ int main (int argc, char* argv[]) {
                 pie[k].srcfilename = filename;
                 pie[k].ip = piecespeer[k][random].first ;
                 pie[k].port = piecespeer[k][random].second;
-                cout << "multithreading " << pie[k].pieceno << endl << flush;
+                //cout << "multithreading " << pie[k].pieceno << endl << flush;
                 int newthread = pthread_create(&tids[i], NULL, DownloadFromPeers, &pie[k]);
                 if( newthread != 0) {
                     cout << "Failed to launch RequestHandler, exiting";
