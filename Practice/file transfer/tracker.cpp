@@ -540,14 +540,14 @@ void ServiceRetrieveRelevantRequest(vector<string> sargs, conn_details con) {
     for( auto i = g->files.begin(); i != g->files.end(); i++) {
 
         if(i->filename == filename) {
-            msg += i->hashoffile + ";" + i->filesize + ";" +i->piecehash.size() +";" ;
+            msg += i->hashoffile + ";" + to_string(i->filesize) + ";" + to_string(i->piecehash.size()) +";" ;
             for (auto k = i->piecehash.begin(); k!=i->piecehash.end(); k++) {
-                msg += k + ";" ;
+                msg += *k + ";" ;
             }
-            msg += i->peerswithfile.size() + ";";
-            for (auto j = i->peerswithfile.begin(); i->peerswithfile.end(); j++) {
-                msg+= j->username + ";" + j->ip + ";" + to_string(j->port)
-                        +";";
+            msg += to_string(i->peerswithfile.size()) + ";";
+            for (auto j = i->peerswithfile.begin(); j != i->peerswithfile.end(); j++) {
+                if((*j)->loggedin = false) continue;
+                msg+= (*j)->username + ";" + (*j)->ip + ";" + to_string((*j)->port) +";";
             }
         }
     }
@@ -604,6 +604,19 @@ void * RequestHandler (void * args) {
     pthread_exit(NULL);
 
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

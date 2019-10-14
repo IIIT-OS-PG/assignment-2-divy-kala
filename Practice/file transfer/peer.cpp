@@ -7,11 +7,14 @@
 #include <unistd.h>
 #include <errno.h>
 #include <openssl/sha.h>
+#include <stdlib.h>
+#include <time.h>
 #define PSIZE (512*1024)
-#define MAX_PARALLEL_REQUESTS 20
+#define MAX_PARALLEL_REQUESTS 50
 
 //PEER
 
+pthread_mutex_t destfilemutex = PTHREAD_MUTEX_INITIALIZER;
 extern int errno;
 using namespace std;
 string skey = "-1";
@@ -25,7 +28,15 @@ struct User {
     int port;
 
 };
+struct piece {
 
+    string ip;
+    int port;
+    string destpath;
+    string srcfilename;
+    long long pieceno;
+
+};
 class File {
 public:
     File (string filename, string path, int numOfPieces, bool piecesAvail = false ) {
@@ -34,9 +45,12 @@ public:
 
         this->path = path;
         this->numOfPieces = numOfPieces;
-        for(int i =0 ; i < numOfPieces;i++)
+        for(int i =0 ; i < numOfPieces; i++)
             piecesAvailable.push_back(piecesAvail);
 
+    }
+    File () {
+        //TODO:Why is this required?
     }
 
 
@@ -134,6 +148,8 @@ sockaddr_in GetTracker() {
 vector<string> GetArgs(char* buff, char* delimit = ";") {
 
     vector<string> ret(0);
+    if(buff[0] == 0)
+        return ret;
     char * saveptr;
 
     char* tok = strtok_r(buff, delimit, &saveptr);
@@ -149,6 +165,14 @@ vector<string> GetArgs(char* buff, char* delimit = ";") {
     }
 
     return ret;
+}
+
+vector <string> GetMessage(int sockfd, int buffsize = 10000) {
+    char buff[buffsize];
+    int datarec = recv (sockfd, buff, buffsize, 0);
+
+    vector<string> sargs = GetArgs(buff);
+    return sargs;
 }
 
 void Notify(string msg, int sockfd) {
@@ -185,16 +209,19 @@ void NotifyTracker(string msg, int sockfd) {
           */
 void  ServiceAvailablePiecesRequest(vector<string> sargs, conn_details con) {
 
-    if( skey != "-1") {
+    if( skey == "-1") {
         Notify("Peer not logged in\n", con.fd);
         return;
     }
     string filename = sargs[1];
     string ret = "";
-    if (auto i = sharedFiles.find(filename)) {
-        for(auto j = i->piecesAvailable.begin(); j != i->piecesAvailable.end(); j++) {
-            if(*j) ret += "1";
-            else ret += "0";
+    auto i = sharedFiles.find(filename) ;
+    if ( i != sharedFiles.end()) {
+        for(auto j = i->second.piecesAvailable.begin(); j != i->second.piecesAvailable.end(); j++) {
+            if(*j)
+                ret += "1";
+            else
+                ret += "0";
         }
     }
     Notify(ret,con.fd);
@@ -222,23 +249,29 @@ void  ServiceGroupJoinRequest(vector<string> sargs) {
 
 
 void ServiceRequestDownload (vector<string> sargs, conn_details con) {
-       /* • Service Request Download <filename, pieceno>
-        ◦ Open relevant file and start sending asked piece
-        */
-        string filename = sargs[0];
-        int pieceno = atoi(sargs[1]);
+    /* • Service Request Download <filename, pieceno>
+     ◦ Open relevant file and start sending asked piece
+     */
 
-        ifstream ifs;
-        string path = sharedFiles[filename]->path;
-        ifs.open(path, ios_base::binary) ;
-        ifs.seekg(pieceno * PSIZE );
-        char readdata[PSIZE+1];
-        ifs.read(readdata, PSIZE);
-        int readsize = ifs.gcount();
-        readdata[readsize] = 0;
-        string msg (readdata);
-        Notify (msg, con.fd);
-        ifs.close();
+    //acts as a server
+    string filename = sargs[1];
+    int pieceno = atoi(sargs[2].c_str());
+
+    ifstream ifs;
+    string path = sharedFiles[filename].path;
+    ifs.open(path, ios_base::binary) ;
+    ifs.seekg(pieceno * PSIZE );
+
+    char readdata[PSIZE];
+    ifs.read(readdata, PSIZE);
+    int readsize = ifs.gcount();
+    ifs.close();
+    cout << "Piece request served: " << pieceno << " Bytes = " <<  readsize <<endl << flush;
+    send (con.fd, readdata, readsize, 0);
+
+//    string msg (readdata);
+//    Notify (msg, con.fd);
+
 
 }
 
@@ -247,27 +280,118 @@ void *  ServicePeerServerRequests (void * args) {
 
     struct conn_details con = *(struct conn_details * )args;
     int remotesock = con.fd;
-    char buff[1000];
-
-    int datarec = recv (remotesock, buff, 999, 0);
 
 
-
-    vector<string> sargs = GetArgs(buff);
-
-    if ( sargs[0] == "join_group") {
+//    int datarec = recv (remotesock, buff, 999, 0);
+//    cout << "command received into server" << buff;
+//
+//
+//    vector<string> sargs = GetArgs(buff);
+    vector<string>sargs = GetMessage(con.fd, 1000);
+    if (sargs.empty()) {
+        cout << "Empty message received";
+    } else if ( sargs[0] == "join_group") {
         ServiceGroupJoinRequest(sargs);
-    }
-    else if (sargs[0] == "available_peer_request") {
+    } else if (sargs[0] == "available_peer_request") {
 
         ServiceAvailablePiecesRequest(sargs, con);
 
+    } else if (sargs[0] == "download_piece") {
+        ServiceRequestDownload (sargs, con);
     }
-
+    close(con.fd);
 }
 
 
+void * DownloadFromPeers ( void * args) {
 
+
+    struct piece pie = *(struct piece * )args;
+
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+
+
+    struct sockaddr_in peer;
+    peer.sin_family = AF_INET;
+    peer.sin_port = htons(pie.port);
+    inet_pton (AF_INET, pie.ip.c_str(), &peer.sin_addr);
+
+
+    struct sockaddr_in saddr = peer;
+    int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
+    if( connectret != 0) {
+        cout << "Connection to peer failed while downloading" << endl;
+        exit(-1);
+    }
+    cout << "Piece request sent: " << pie.pieceno << endl << flush;
+    string msg = "download_piece;" + pie.srcfilename + ";" + to_string(pie.pieceno) +";";
+    cout << msg << endl << flush;
+    Notify(msg,sockfd);
+
+//
+//    char buff[PSIZE];
+//    int datarec;
+//    int toBeRecv = PSIZE;
+//    do {
+//        datarec = recv (sockfd, buff +, toBeRecv, 0);
+//        toBeRecv -= datarec;
+//
+//
+//
+//    } while(datarec != 0 && toBeRecv != 0) ;
+
+
+
+
+
+    char buffer[8192];
+    int length = PSIZE;
+    int total = 0;
+    int count;
+    ofstream destfile;
+    destfile.open(pie.destpath, ios_base::binary | ios_base::out);
+    destfile.seekp(pie.pieceno * PSIZE);
+
+    while (total < length && (count = recv(sockfd, buffer, min(8192, length-total), 0)) > 0)
+    {
+
+
+        destfile.write(buffer,count);
+        total += count;
+    }
+
+
+    destfile.close();
+
+
+cout << "Piece no " << pie.pieceno << "\t bytes = " << total << endl << flush;
+
+
+
+
+
+
+
+
+
+
+
+//    ofstream destfile;
+//    pthread_mutex_lock( &destfilemutex );
+//
+//
+//    destfile.open(pie.destpath, ios_base::binary | ios_base::out);
+//    destfile.seekp(pie.pieceno * PSIZE);
+//    destfile.write(buff,datarec);
+//
+//
+//    pthread_mutex_unlock( &destfilemutex );
+
+    close(sockfd);
+
+
+}
 void * PeerServerListener  ( void * ) {
 
     int serverfd;
@@ -299,6 +423,7 @@ void * PeerServerListener  ( void * ) {
     pthread_t tids[MAX_PARALLEL_REQUESTS];
     int i = 0;
     int remotesock[MAX_PARALLEL_REQUESTS];
+    struct conn_details con[MAX_PARALLEL_REQUESTS];
     while(true) {
         remotesock[i] = accept(serverfd,(struct sockaddr *) &saddr,(socklen_t*) &x  );
         if(remotesock[i] == -1) {
@@ -306,11 +431,11 @@ void * PeerServerListener  ( void * ) {
             cout << "connnection accepting failed for peer server. remote sock is " << remotesock[i] << endl;
             exit(-1);
         }
-        struct conn_details con;
-        con.fd = remotesock[i];
-        con.ip = inet_ntoa(saddr.sin_addr );
-        con.port = ntohs(saddr.sin_port);
-        int newthread = pthread_create(&tids[i], NULL, ServicePeerServerRequests, &con);
+
+        con[i].fd = remotesock[i];
+        con[i].ip = inet_ntoa(saddr.sin_addr );
+        con[i].port = ntohs(saddr.sin_port);
+        int newthread = pthread_create(&tids[i], NULL, ServicePeerServerRequests, &con[i]);
         if( newthread != 0) {
             cout << "Failed to launch RequestHandler, exiting";
             exit(-1);
@@ -331,14 +456,6 @@ void * PeerServerListener  ( void * ) {
     }
 
 
-}
-
-vector <string> GetMessage(int sockfd) {
-    char buff[10000];
-    int datarec = recv (sockfd, buff, 9999, 0);
-
-    vector<string> sargs = GetArgs(buff);
-    return sargs;
 }
 
 
@@ -521,16 +638,16 @@ int main (int argc, char* argv[]) {
 
 
             //get number of pieces and piece wise hash
-            int numOfPieces = ceil((float)filesize/PSIZE);
+            int numOfPieces = (int)ceil((float)filesize/PSIZE);
             //cout << "pieces = " << numOfPieces << endl;
-           // cout << filehash << endl;
+            // cout << filehash << endl;
             string piecehash[numOfPieces];
             for(int i = 0; i < numOfPieces; i++) {
                 char tmp[PSIZE];
                 ifs.read( tmp, PSIZE);
 
                 piecehash[i] = GetSHAFromChars(tmp, ifs.gcount());
-              //  cout << i <<". = " << piecehash[i] << endl;
+                //  cout << i <<". = " << piecehash[i] << endl;
             }
 
 
@@ -539,8 +656,8 @@ int main (int argc, char* argv[]) {
 
             // send file details to tracker
             string msg = "upload_file;" + skey +";" + gid + ";" + path
-                        + ";" + filename + ";" + to_string(filesize) + ";"
-                            +filehash + ";" + to_string(numOfPieces) + ";";
+                         + ";" + filename + ";" + to_string(filesize) + ";"
+                         +filehash + ";" + to_string(numOfPieces) + ";";
             for(int i = 0; i < numOfPieces; i++) {
                 msg += piecehash[i] + ";";
             }
@@ -566,8 +683,15 @@ int main (int argc, char* argv[]) {
             //Retrieve relevant peers, hash from tracker for the file,
             //piecewise hash,file size,
             NotifyTracker("retrieve_relevant;" + skey +
-                            ";"+gid+";"+filename+";",sockfd);
+                          ";"+gid+";"+filename+";",sockfd);
             vector<string> sargs = GetMessage(sockfd);
+            //connection must be closed now for allowing new connection later
+            close(sockfd);
+
+
+
+
+
             if(sargs[0] == "You do not belong to this group") {
 
                 cout <<sargs[0]<<endl;
@@ -575,42 +699,185 @@ int main (int argc, char* argv[]) {
                 continue;
             }
             string hashoffile = sargs[0];
-            long long filesize = atoll(sargs[1]);
-            int numOfPieces = atoi(sargs[2]);
+            long long filesize = atoll(sargs[1].c_str());
+            int numOfPieces = atoi(sargs[2].c_str());
             vector<string> piecehashes;
             vector<User> relevantPeers;
             for(int i = 0; i < numOfPieces; i++) {
-                piecehashes.push_back(sargs[i+3];
+                piecehashes.push_back(sargs[i+3]);
             }
-            int numOfPeers = atoi(sargs[3+numOfPieces]);
+            int numOfPeers = atoi(sargs[3+numOfPieces].c_str());
             for(int i = 0; i < numOfPeers; i++) {
                 struct User u;
                 u.username = sargs [4+numOfPieces+i];
-                u.ip = sargs [4+numOfPiece +i +1];
-                u.port = atoi ( sargs [4 +numOfPieces + i +2] );
-                relevantUsers.push_back(u);
+                u.ip = sargs [4+numOfPieces +i +1];
+                u.port = atoi ( sargs [4 +numOfPieces + i +2].c_str());
+                relevantPeers.push_back(u);
             }
+
+
+            cout << numOfPieces << " pieces." << endl << flush;
+
+            //Update sharedfiles map
+            sharedFiles.emplace(filename, File(filename,destpath,numOfPieces, false));
+
+
+            //Make Shareable Request to tracker <filename extracted
+            //from path, size, Hash of file (one that was just received),
+            // hash of pieces, Groupid, session id> (only for first piece)
+
+
+            int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+            struct sockaddr_in saddr = GetTracker();;
+            int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
+            if( connectret != 0) {
+                cout << "Connection to tracker failed" << endl;
+                exit(-1);
+            }
+
+
+
+            string msg = "upload_file;" + skey +";" + gid + ";" + destpath
+                         + ";" + filename + ";" + to_string(filesize) + ";"
+                         +hashoffile + ";" + to_string(numOfPieces) + ";";
+            for(int i = 0; i < numOfPieces; i++) {
+                msg += piecehashes[i] + ";";
+            }
+            NotifyTracker (msg, sockfd);
+            //TODO: TEST ON EMPTY FILE WHERE THERE IS NO HASH TO CALCULATE
+            cout << GetMessage(sockfd)[0] << endl;
+
+            close(sockfd);
+
+
+
+
+
+            //Now Query for Available Pieces to relevant peers <filename>
+            //(need not be multithreaded)
+            vector <vector<pair<string, int>>> piecespeer(numOfPieces );
+            for(auto i = relevantPeers.begin(); i != relevantPeers.end(); i++) {
+
+                string ip = i->ip;
+                int port = i->port;
+
+                int peerfd = socket(AF_INET, SOCK_STREAM, 0);
+
+                struct sockaddr_in peer;
+                peer.sin_port = htons(port);
+                peer.sin_family = AF_INET;
+
+                inet_pton (AF_INET, ip.c_str(), &peer.sin_addr);
+
+                int joingrppeer = connect (peerfd,(struct sockaddr*) &peer, sizeof(peer) );
+
+
+
+                string msg = "available_peer_request;" + filename + ";";
+                Notify(msg, peerfd);
+                string boolstr = GetMessage(peerfd)[0];
+
+
+
+                for( int j = 0; j <boolstr.length(); j++) {
+                    if(boolstr[j] == '0') {
+
+                    } else if(boolstr[j] == '1') {
+                        piecespeer[j].push_back(make_pair(ip,port));
+                    } else {
+                        cout << "available_peer_request not properly done. Error" << endl << flush;
+                        exit(-1);
+
+                    }
+                }
+                close(peerfd);
+            }
+
+
 
 
             //create NULL file, lots of bugs to fix
 
+            ofstream destfile;
+            destfile.open(destpath, ios_base::out | ios_base::binary);
+            long long bytestowrite = filesize;
+            while(bytestowrite != 0) {
+                if( bytestowrite < 8192) {
+                    string tmp (bytestowrite, 0);
+                    destfile.write(tmp.c_str(), bytestowrite);
+                    bytestowrite = 0;
+                } else {
+
+                    string tmp (8192, 0);
+                    destfile.write(tmp.c_str(), 8192);
+                    bytestowrite -= 8192;
+                }
+
+            }
+
+
+            //Randomly select peers and multithread to download them
+
+            pthread_t tids[MAX_PARALLEL_REQUESTS];
+            int i = 0;
+            int k = 0;
+            srand (time(NULL));
+            struct piece pie[numOfPieces];
+            while(k < numOfPieces) {
 
 
 
+                //select peer to get piece from
+
+                long long random = rand() % piecespeer[k].size();
+
+                pie[k].pieceno = k;
+                pie[k].destpath = destpath;
+                pie[k].srcfilename = filename;
+                pie[k].ip = piecespeer[k][random].first ;
+                pie[k].port = piecespeer[k][random].second;
+                cout << "multithreading " << pie[k].pieceno << endl << flush;
+                int newthread = pthread_create(&tids[i], NULL, DownloadFromPeers, &pie[k]);
+                if( newthread != 0) {
+                    cout << "Failed to launch RequestHandler, exiting";
+                    exit(-1);
+                }
+
+                i++;
+                if( i >= MAX_PARALLEL_REQUESTS) {
+
+                    for (int j = 0; j < i; j++) {
+                        pthread_join(tids[j], NULL);
+                    }
+                    i=0;
+
+                }
+                k++;
+
+
+            }
+
+            for (int j = 0; j < i; j++) {
+                pthread_join(tids[j], NULL);
+            }
+
+            if (GetSHA(destpath) == hashoffile) {
+                cout << "same hai" << flush;
+
+            } else {
+                cout << "galat" << flush;
+            }
+
+
+            //NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
 
 
 
-
-
-
-
-
-             //NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
+            continue;
         } else if (input == "show_downloads") {
 
 
-        }
-        else {
+        } else {
 
 
         }
