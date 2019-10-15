@@ -15,6 +15,7 @@
 //PEER
 
 pthread_mutex_t destfilemutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t downloadmutex = PTHREAD_MUTEX_INITIALIZER;
 extern int errno;
 using namespace std;
 string skey = "-1";
@@ -211,6 +212,7 @@ void Notify(string msg, int sockfd) {
     cmsg[msg.length()] = '\0';
     char * buff = cmsg;
     send(sockfd, buff, strlen(buff)+1, 0);
+//   send(
     return;
 }
 
@@ -532,6 +534,249 @@ void * PeerServerListener  ( void * ) {
 
 
 }
+struct dlthread {
+    string gid, filename, destpath;
+
+
+};
+set<tuple<string, string, string>> downloads;
+void * DownloadThread ( void * args) {
+
+    struct dlthread dlt = *(struct dlthread * )args;
+    //Retrieve relevant peers, hash from tracker for the file,
+    //piecewise hash,file size,
+    string gid,filename,destpath;
+    gid = dlt.gid;
+    filename = dlt.filename;
+    destpath = dlt.destpath;
+    pthread_mutex_lock( &downloadmutex );
+    downloads.emplace("D", gid, filename);
+    pthread_mutex_unlock( &downloadmutex );
+
+
+
+
+    int sockfd1 = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in saddr1 = GetTracker();;
+    int connectret1 = connect (sockfd1,(struct sockaddr*) &saddr1, sizeof(saddr1) );
+    if( connectret1 != 0) {
+        cout << "Connection to tracker failed" << endl;
+        exit(-1);
+    }
+
+
+
+
+
+    NotifyTracker("retrieve_relevant;" + skey +
+                  ";"+gid+";"+filename+";",sockfd1);
+    vector<string> sargs1 = GetMessage(sockfd1);
+    //connection must be closed now for allowing new connection later
+    close(sockfd1);
+
+
+
+
+
+    if(sargs1[0] == "You do not belong to this group") {
+
+        cout <<sargs1[0]<<endl;
+        close(sockfd1);
+        return NULL;
+    }
+    string hashoffile = sargs1[0];
+    long long filesize = atoll(sargs1[1].c_str());
+    int numOfPieces = atoi(sargs1[2].c_str());
+    vector<string> piecehashes;
+    vector<User> relevantPeers;
+    for(int i = 0; i < numOfPieces; i++) {
+        piecehashes.push_back(sargs1[i+3]);
+    }
+    int numOfPeers = atoi(sargs1[3+numOfPieces].c_str());
+    for(int i = 0; i < numOfPeers; i+=3) {
+        struct User u;
+        u.username = sargs1 [4+numOfPieces+i]; //4   +3
+        u.ip = sargs1 [4+numOfPieces +i +1]; //5 6
+        u.port = atoi ( sargs1 [4 +numOfPieces + i +2].c_str());//6
+        relevantPeers.push_back(u);
+    }
+
+
+    //       cout << numOfPieces << " pieces." << endl << flush;
+
+    //Update sharedfiles map
+    sharedFiles.emplace(filename, File(filename,destpath,numOfPieces, false));
+
+
+    //Make Shareable Request to tracker <filename extracted
+    //from path, size, Hash of file (one that was just received),
+    // hash of pieces, Groupid, session id> (only for first piece)
+
+
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in saddr = GetTracker();;
+    int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
+    if( connectret != 0) {
+        cout << "Connection to tracker failed" << endl;
+        exit(-1);
+    }
+
+
+
+    string msg = "upload_file;" + skey +";" + gid + ";" + destpath
+                 + ";" + filename + ";" + to_string(filesize) + ";"
+                 +hashoffile + ";" + to_string(numOfPieces) + ";";
+    for(int i = 0; i < numOfPieces; i++) {
+        msg += piecehashes[i] + ";";
+    }
+    NotifyTracker (msg, sockfd);
+    //TODO: TEST ON EMPTY FILE WHERE THERE IS NO HASH TO CALCULATE
+    cout << GetMessage(sockfd)[0] << endl;
+
+    close(sockfd1);
+
+
+
+
+
+    //Now Query for Available Pieces to relevant peers <filename>
+    //(need not be multithreaded)
+    vector <vector<pair<string, int>>> piecespeer(numOfPieces );
+    for(auto i = relevantPeers.begin(); i != relevantPeers.end(); i++) {
+
+        string ip = i->ip;
+        int port = i->port;
+
+        int peerfd = socket(AF_INET, SOCK_STREAM, 0);
+
+        struct sockaddr_in peer;
+        peer.sin_port = htons(port);
+        peer.sin_family = AF_INET;
+
+        inet_pton (AF_INET, ip.c_str(), &peer.sin_addr);
+
+        int joingrppeer = connect (peerfd,(struct sockaddr*) &peer, sizeof(peer) );
+
+
+
+        string msg = "available_peer_request;" + filename + ";";
+        Notify(msg, peerfd);
+        string boolstr = GetMessage(peerfd)[0];
+
+
+
+        for( int j = 0; j <boolstr.length(); j++) {
+            if(boolstr[j] == '0') {
+
+            } else if(boolstr[j] == '1') {
+                piecespeer[j].push_back(make_pair(ip,port));
+            } else {
+                cout << "available_peer_request not properly done. Error" << endl << flush;
+                exit(-1);
+
+            }
+        }
+        close(peerfd);
+    }
+
+
+
+
+    //create NULL file, lots of bugs to fix
+
+    ofstream destfile;
+    destfile.open(destpath, ios_base::out | ios_base::binary);
+    long long bytestowrite = filesize;
+    while(bytestowrite != 0) {
+        if( bytestowrite < 8192) {
+            string tmp (bytestowrite, 0);
+            destfile.write(tmp.c_str(), bytestowrite);
+            bytestowrite = 0;
+        } else {
+
+            string tmp (8192, 0);
+            destfile.write(tmp.c_str(), 8192);
+            bytestowrite -= 8192;
+        }
+
+    }
+
+
+    //Randomly select peers and multithread to download them
+
+    pthread_t tids[MAX_PARALLEL_REQUESTS];
+    int i = 0;
+    int k = 0;
+    srand (time(NULL));
+    struct piece pie[numOfPieces];
+    while(k < numOfPieces) {
+
+
+
+        //select peer to get piece from
+
+        long long random = rand() % piecespeer[k].size();
+        pie[k].piecehash = piecehashes[k];
+        pie[k].pieceno = k;
+        pie[k].destpath = destpath;
+        pie[k].srcfilename = filename;
+        pie[k].ip = piecespeer[k][random].first ;
+        pie[k].port = piecespeer[k][random].second;
+        //cout << "multithreading " << pie[k].pieceno << endl << flush;
+        int newthread = pthread_create(&tids[i], NULL, DownloadFromPeers, &pie[k]);
+        if( newthread != 0) {
+            cout << "Failed to launch RequestHandler, exiting";
+            exit(-1);
+        }
+
+        i++;
+        if( i >= MAX_PARALLEL_REQUESTS) {
+
+            for (int j = 0; j < i; j++) {
+                pthread_join(tids[j], NULL);
+            }
+            i=0;
+
+        }
+        k++;
+
+
+    }
+
+    for (int j = 0; j < i; j++) {
+        pthread_join(tids[j], NULL);
+    }
+    auto diterator = downloads.find(make_tuple("D", gid, filename ));
+    if (GetSHA(destpath) == hashoffile) {
+        cout << "File downloaded, file integrity checked" << flush;
+
+        if (diterator != downloads.end() ) {
+            pthread_mutex_lock( &downloadmutex );
+            downloads.erase(diterator);
+
+            downloads.emplace("C", gid, filename);
+            pthread_mutex_unlock( &downloadmutex );
+        }
+
+
+
+    } else {
+
+        cout << "File download failed. Try again" << flush;
+        if (diterator != downloads.end() ) {
+            pthread_mutex_lock( &downloadmutex );
+            downloads.erase(diterator);
+            downloads.emplace("F", gid, filename);
+            pthread_mutex_unlock( &downloadmutex );
+        }
+
+    }
+
+
+    //NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
+
+}
+
 
 
 int main (int argc, char* argv[]) {
@@ -554,8 +799,9 @@ int main (int argc, char* argv[]) {
         exit(-1);
     }
 
-
-
+    struct dlthread pass[MAX_PARALLEL_REQUESTS];
+    pthread_t tservo[MAX_PARALLEL_REQUESTS];
+    int ii = 0;
     //PeerClient code
     string input = "";
     skey = "-1";
@@ -752,205 +998,251 @@ int main (int argc, char* argv[]) {
             cout << GetMessage(sockfd)[0] << endl;
 
         } else if (input == "download") {
+
+
+
+            //select peer to get piece from
             string gid, filename, destpath;
             cin >> gid >> filename >> destpath;
-
-            //Retrieve relevant peers, hash from tracker for the file,
-            //piecewise hash,file size,
-            NotifyTracker("retrieve_relevant;" + skey +
-                          ";"+gid+";"+filename+";",sockfd);
-            vector<string> sargs = GetMessage(sockfd);
-            //connection must be closed now for allowing new connection later
             close(sockfd);
 
 
 
+            pass[ii].destpath = destpath;
+            pass[ii].filename = filename;
+            pass[ii].gid = gid;
 
-
-            if(sargs[0] == "You do not belong to this group") {
-
-                cout <<sargs[0]<<endl;
-                close(sockfd);
-                continue;
-            }
-            string hashoffile = sargs[0];
-            long long filesize = atoll(sargs[1].c_str());
-            int numOfPieces = atoi(sargs[2].c_str());
-            vector<string> piecehashes;
-            vector<User> relevantPeers;
-            for(int i = 0; i < numOfPieces; i++) {
-                piecehashes.push_back(sargs[i+3]);
-            }
-            int numOfPeers = atoi(sargs[3+numOfPieces].c_str());
-            for(int i = 0; i < numOfPeers; i++) {
-                struct User u;
-                u.username = sargs [4+numOfPieces+i];
-                u.ip = sargs [4+numOfPieces +i +1];
-                u.port = atoi ( sargs [4 +numOfPieces + i +2].c_str());
-                relevantPeers.push_back(u);
-            }
-
-
-            cout << numOfPieces << " pieces." << endl << flush;
-
-            //Update sharedfiles map
-            sharedFiles.emplace(filename, File(filename,destpath,numOfPieces, false));
-
-
-            //Make Shareable Request to tracker <filename extracted
-            //from path, size, Hash of file (one that was just received),
-            // hash of pieces, Groupid, session id> (only for first piece)
-
-
-            int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-            struct sockaddr_in saddr = GetTracker();;
-            int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
-            if( connectret != 0) {
-                cout << "Connection to tracker failed" << endl;
+            int newthread = pthread_create(&tservo[ii], NULL, DownloadThread, &pass[ii] );
+            if( newthread != 0) {
+                cout << "Failed to launch PeerServerHandler, exiting";
                 exit(-1);
             }
 
 
 
-            string msg = "upload_file;" + skey +";" + gid + ";" + destpath
-                         + ";" + filename + ";" + to_string(filesize) + ";"
-                         +hashoffile + ";" + to_string(numOfPieces) + ";";
-            for(int i = 0; i < numOfPieces; i++) {
-                msg += piecehashes[i] + ";";
-            }
-            NotifyTracker (msg, sockfd);
-            //TODO: TEST ON EMPTY FILE WHERE THERE IS NO HASH TO CALCULATE
-            cout << GetMessage(sockfd)[0] << endl;
+            ii++;
+            if( ii >= MAX_PARALLEL_REQUESTS) {
 
-            close(sockfd);
-
-
-
-
-
-            //Now Query for Available Pieces to relevant peers <filename>
-            //(need not be multithreaded)
-            vector <vector<pair<string, int>>> piecespeer(numOfPieces );
-            for(auto i = relevantPeers.begin(); i != relevantPeers.end(); i++) {
-
-                string ip = i->ip;
-                int port = i->port;
-
-                int peerfd = socket(AF_INET, SOCK_STREAM, 0);
-
-                struct sockaddr_in peer;
-                peer.sin_port = htons(port);
-                peer.sin_family = AF_INET;
-
-                inet_pton (AF_INET, ip.c_str(), &peer.sin_addr);
-
-                int joingrppeer = connect (peerfd,(struct sockaddr*) &peer, sizeof(peer) );
-
-
-
-                string msg = "available_peer_request;" + filename + ";";
-                Notify(msg, peerfd);
-                string boolstr = GetMessage(peerfd)[0];
-
-
-
-                for( int j = 0; j <boolstr.length(); j++) {
-                    if(boolstr[j] == '0') {
-
-                    } else if(boolstr[j] == '1') {
-                        piecespeer[j].push_back(make_pair(ip,port));
-                    } else {
-                        cout << "available_peer_request not properly done. Error" << endl << flush;
-                        exit(-1);
-
-                    }
+                for (int j = 0; j < ii; j++) {
+                    pthread_join(tservo[j], NULL);
                 }
-                close(peerfd);
-            }
-
-
-
-
-            //create NULL file, lots of bugs to fix
-
-            ofstream destfile;
-            destfile.open(destpath, ios_base::out | ios_base::binary);
-            long long bytestowrite = filesize;
-            while(bytestowrite != 0) {
-                if( bytestowrite < 8192) {
-                    string tmp (bytestowrite, 0);
-                    destfile.write(tmp.c_str(), bytestowrite);
-                    bytestowrite = 0;
-                } else {
-
-                    string tmp (8192, 0);
-                    destfile.write(tmp.c_str(), 8192);
-                    bytestowrite -= 8192;
-                }
+                ii=0;
 
             }
 
 
-            //Randomly select peers and multithread to download them
-
-            pthread_t tids[MAX_PARALLEL_REQUESTS];
-            int i = 0;
-            int k = 0;
-            srand (time(NULL));
-            struct piece pie[numOfPieces];
-            while(k < numOfPieces) {
 
 
 
-                //select peer to get piece from
 
-                long long random = rand() % piecespeer[k].size();
-                pie[k].piecehash = piecehashes[k];
-                pie[k].pieceno = k;
-                pie[k].destpath = destpath;
-                pie[k].srcfilename = filename;
-                pie[k].ip = piecespeer[k][random].first ;
-                pie[k].port = piecespeer[k][random].second;
-                //cout << "multithreading " << pie[k].pieceno << endl << flush;
-                int newthread = pthread_create(&tids[i], NULL, DownloadFromPeers, &pie[k]);
-                if( newthread != 0) {
-                    cout << "Failed to launch RequestHandler, exiting";
-                    exit(-1);
-                }
+            /*   string gid, filename, destpath;
+               cin >> gid >> filename >> destpath;
 
-                i++;
-                if( i >= MAX_PARALLEL_REQUESTS) {
-
-                    for (int j = 0; j < i; j++) {
-                        pthread_join(tids[j], NULL);
-                    }
-                    i=0;
-
-                }
-                k++;
-
-
-            }
-
-            for (int j = 0; j < i; j++) {
-                pthread_join(tids[j], NULL);
-            }
-
-            if (GetSHA(destpath) == hashoffile) {
-                cout << "File downloaded, file integrity checked" << flush;
-
-            } else {
-                cout << "File download failed. Try again" << flush;
-            }
-
-
-            //NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
+               //Retrieve relevant peers, hash from tracker for the file,
+               //piecewise hash,file size,
+               NotifyTracker("retrieve_relevant;" + skey +
+                             ";"+gid+";"+filename+";",sockfd);
+               vector<string> sargs = GetMessage(sockfd);
+               //connection must be closed now for allowing new connection later
+               close(sockfd);
 
 
 
-            continue;
+
+
+               if(sargs[0] == "You do not belong to this group") {
+
+                   cout <<sargs[0]<<endl;
+                   close(sockfd);
+                   continue;
+               }
+               string hashoffile = sargs[0];
+               long long filesize = atoll(sargs[1].c_str());
+               int numOfPieces = atoi(sargs[2].c_str());
+               vector<string> piecehashes;
+               vector<User> relevantPeers;
+               for(int i = 0; i < numOfPieces; i++) {
+                   piecehashes.push_back(sargs[i+3]);
+               }
+               int numOfPeers = atoi(sargs[3+numOfPieces].c_str());
+               for(int i = 0; i < numOfPeers; i++) {
+                   struct User u;
+                   u.username = sargs [4+numOfPieces+i];
+                   u.ip = sargs [4+numOfPieces +i +1];
+                   u.port = atoi ( sargs [4 +numOfPieces + i +2].c_str());
+                   relevantPeers.push_back(u);
+               }
+
+
+               cout << numOfPieces << " pieces." << endl << flush;
+
+               //Update sharedfiles map
+               sharedFiles.emplace(filename, File(filename,destpath,numOfPieces, false));
+
+
+               //Make Shareable Request to tracker <filename extracted
+               //from path, size, Hash of file (one that was just received),
+               // hash of pieces, Groupid, session id> (only for first piece)
+
+
+               int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+               struct sockaddr_in saddr = GetTracker();;
+               int connectret = connect (sockfd,(struct sockaddr*) &saddr, sizeof(saddr) );
+               if( connectret != 0) {
+                   cout << "Connection to tracker failed" << endl;
+                   exit(-1);
+               }
+
+
+
+               string msg = "upload_file;" + skey +";" + gid + ";" + destpath
+                            + ";" + filename + ";" + to_string(filesize) + ";"
+                            +hashoffile + ";" + to_string(numOfPieces) + ";";
+               for(int i = 0; i < numOfPieces; i++) {
+                   msg += piecehashes[i] + ";";
+               }
+               NotifyTracker (msg, sockfd);
+               //TODO: TEST ON EMPTY FILE WHERE THERE IS NO HASH TO CALCULATE
+               cout << GetMessage(sockfd)[0] << endl;
+
+               close(sockfd);
+
+
+
+
+
+               //Now Query for Available Pieces to relevant peers <filename>
+               //(need not be multithreaded)
+               vector <vector<pair<string, int>>> piecespeer(numOfPieces );
+               for(auto i = relevantPeers.begin(); i != relevantPeers.end(); i++) {
+
+                   string ip = i->ip;
+                   int port = i->port;
+
+                   int peerfd = socket(AF_INET, SOCK_STREAM, 0);
+
+                   struct sockaddr_in peer;
+                   peer.sin_port = htons(port);
+                   peer.sin_family = AF_INET;
+
+                   inet_pton (AF_INET, ip.c_str(), &peer.sin_addr);
+
+                   int joingrppeer = connect (peerfd,(struct sockaddr*) &peer, sizeof(peer) );
+
+
+
+                   string msg = "available_peer_request;" + filename + ";";
+                   Notify(msg, peerfd);
+                   string boolstr = GetMessage(peerfd)[0];
+
+
+
+                   for( int j = 0; j <boolstr.length(); j++) {
+                       if(boolstr[j] == '0') {
+
+                       } else if(boolstr[j] == '1') {
+                           piecespeer[j].push_back(make_pair(ip,port));
+                       } else {
+                           cout << "available_peer_request not properly done. Error" << endl << flush;
+                           exit(-1);
+
+                       }
+                   }
+                   close(peerfd);
+               }
+
+
+
+
+               //create NULL file, lots of bugs to fix
+
+               ofstream destfile;
+               destfile.open(destpath, ios_base::out | ios_base::binary);
+               long long bytestowrite = filesize;
+               while(bytestowrite != 0) {
+                   if( bytestowrite < 8192) {
+                       string tmp (bytestowrite, 0);
+                       destfile.write(tmp.c_str(), bytestowrite);
+                       bytestowrite = 0;
+                   } else {
+
+                       string tmp (8192, 0);
+                       destfile.write(tmp.c_str(), 8192);
+                       bytestowrite -= 8192;
+                   }
+
+               }
+
+
+               //Randomly select peers and multithread to download them
+
+               pthread_t tids[MAX_PARALLEL_REQUESTS];
+               int i = 0;
+               int k = 0;
+               srand (time(NULL));
+               struct piece pie[numOfPieces];
+               while(k < numOfPieces) {
+
+
+
+                   //select peer to get piece from
+
+                   long long random = rand() % piecespeer[k].size();
+                   pie[k].piecehash = piecehashes[k];
+                   pie[k].pieceno = k;
+                   pie[k].destpath = destpath;
+                   pie[k].srcfilename = filename;
+                   pie[k].ip = piecespeer[k][random].first ;
+                   pie[k].port = piecespeer[k][random].second;
+                   //cout << "multithreading " << pie[k].pieceno << endl << flush;
+                   int newthread = pthread_create(&tids[i], NULL, DownloadFromPeers, &pie[k]);
+                   if( newthread != 0) {
+                       cout << "Failed to launch RequestHandler, exiting";
+                       exit(-1);
+                   }
+
+                   i++;
+                   if( i >= MAX_PARALLEL_REQUESTS) {
+
+                       for (int j = 0; j < i; j++) {
+                           pthread_join(tids[j], NULL);
+                       }
+                       i=0;
+
+                   }
+                   k++;
+
+
+               }
+
+               for (int j = 0; j < i; j++) {
+                   pthread_join(tids[j], NULL);
+               }
+
+               if (GetSHA(destpath) == hashoffile) {
+                   cout << "File downloaded, file integrity checked" << flush;
+
+               } else {
+                   cout << "File download failed. Try again" << flush;
+               }
+
+
+               //NotifyTracker("download;" + skey + ";"+gid+";"+srcpath+";",sockfd);
+
+
+               continue;
+               */
         } else if (input == "show_downloads") {
+            pthread_mutex_lock( &downloadmutex );
 
+
+            for( auto i = downloads.begin(); i != downloads.end(); i++) {
+                string s,g,f;
+                tie(s,g,f) = *i;
+                cout << "[" <<s <<"]\t"  << g << "\t" << f << endl << flush;
+
+            }
+            pthread_mutex_unlock( &downloadmutex );
 
         } else {
 
